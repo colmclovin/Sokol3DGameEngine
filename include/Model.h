@@ -28,8 +28,9 @@ struct Model3D {
 
 // Instance referencing a mesh loaded into the Renderer
 struct ModelInstance {
-    int mesh_id;           // mesh id returned by Renderer::AddMesh
-    hmm_mat4 transform;    // model transform
+    int mesh_id; // mesh id returned by Renderer::AddMesh
+    hmm_mat4 transform; // model transform
+    bool active = true; // ADDED: Is this instance active?
 };
 
 // Light component

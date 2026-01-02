@@ -285,6 +285,7 @@ int Renderer::AddInstance(int meshId, const hmm_mat4& transform) {
     ModelInstance inst;
     inst.mesh_id = meshId;
     inst.transform = transform;
+    inst.active = true; // Mark instance as active by default
     instances_.push_back(inst);
     return (int)instances_.size() - 1;
 }
@@ -296,7 +297,11 @@ void Renderer::UpdateInstanceTransform(int instanceId, const hmm_mat4& transform
 
 void Renderer::RemoveInstance(int instanceId) {
     if (instanceId < 0 || instanceId >= (int)instances_.size()) return;
-    instances_.erase(instances_.begin() + instanceId);
+    printf("Renderer: Marking instance %d as inactive (mesh_id=%d)\n", 
+           instanceId, instances_[instanceId].mesh_id);
+    instances_[instanceId].active = false;  // Mark as inactive instead of erasing
+    // Also remove from screenSpaceInstances if present
+    screenSpaceInstances_.erase(instanceId);
 }
 
 void Renderer::SetInstanceScreenSpace(int instanceId, bool isScreenSpace) {
@@ -328,8 +333,11 @@ void Renderer::render_instances(const hmm_mat4& view_proj, const std::set<int>& 
     // Reuse cached map
     mesh_instances_cache_.clear();
     
-    // Group instances by mesh, filtering based on screen-space status
+    // Group instances by mesh, filtering based on screen-space status AND active state
     for (size_t i = 0; i < instances_.size(); ++i) {
+        // ADDED: Skip inactive instances
+        if (!instances_[i].active) continue;
+        
         bool isScreenSpace = (screenSpaceInstances_.find((int)i) != screenSpaceInstances_.end());
         bool shouldInclude = exclude ? !isScreenSpace : isScreenSpace;
         

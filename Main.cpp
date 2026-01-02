@@ -43,6 +43,7 @@ extern "C" void slog_to_debug(const char* tag,
 #include <time.h>
 #include <cmath>
 #include <vector>
+#include <unordered_map>
 
 static Renderer renderer;
 static AudioEngine audio;
@@ -56,36 +57,329 @@ static PlayerController* player = nullptr;
 static std::vector<EntityId> enemyEntities;
 static std::vector<EntityId> treeEntities;
 static std::vector<EntityId> UIEntities;
+static std::vector<EntityId> lightEntities;
 static EntityId hudQuadEntity = -1;
 static EntityId billboardQuadEntity = -1;
 static EntityId groundEntity = -1;
 
-#define MAX_MODELS 16
+// Wireframe system for edit mode
+static int wireframeYellowMeshId = -1; // Unselected wireframe (yellow)
+static int wireframeOrangeMeshId = -1; // Selected wireframe (orange)
+static std::unordered_map<EntityId, EntityId> entityWireframes; // Map entity -> wireframe entity
+
+// Selection state
+static EntityId selectedEntity = -1;
+
+#define MAX_MODELS 32  // Increased to accommodate wireframe meshes
 Model3D models3D[MAX_MODELS];
 
 static bool mouse_locked = true;
 
-// Callback for when GUI visibility changes
-void OnGuiVisibilityChanged(bool visible) {
-    if (visible) {
-        // GUI opened - unlock mouse and disable player input
+// Helper to update mouse/cursor state based on game mode
+void UpdateCursorState() {
+    if (gameState.IsEdit()) {
+        // EDIT MODE: Always show cursor, unlock mouse
         sapp_lock_mouse(false);
         sapp_show_mouse(true);
+        mouse_locked = false;
         if (player) {
-            player->SetInputEnabled(false);
+            player->SetInputEnabled(!ui.IsGuiVisible()); // Disable input when GUI is visible
         }
-        printf("GUI opened - mouse unlocked, camera frozen\n");
     } else {
-        // GUI closed - restore mouse lock and enable player input
-        if (mouse_locked) {
+        // PLAYING MODE: Lock cursor when GUI is closed
+        if (ui.IsGuiVisible()) {
+            sapp_lock_mouse(false);
+            sapp_show_mouse(true);
+            mouse_locked = false;
+            if (player) {
+                player->SetInputEnabled(false);
+            }
+        } else {
             sapp_lock_mouse(true);
             sapp_show_mouse(false);
+            mouse_locked = true;
+            if (player) {
+                player->SetInputEnabled(true);
+            }
         }
-        if (player) {
-            player->SetInputEnabled(true);
-        }
-        printf("GUI closed - mouse locked, camera active\n");
     }
+}
+
+// Callback for when GUI visibility changes
+void OnGuiVisibilityChanged(bool visible) {
+    UpdateCursorState();
+    printf("GUI %s\n", visible ? "opened" : "closed");
+}
+
+// Helper to render entity inspector panel
+void RenderEntityInspector() {
+    if (selectedEntity == -1) {
+        ImGui::Text("No entity selected");
+        ImGui::Text("Click on an entity in Edit mode to select it");
+        return;
+    }
+    
+    Selectable* sel = ecs.GetSelectable(selectedEntity);
+    if (!sel) {
+        ImGui::Text("Selected entity has no Selectable component");
+        return;
+    }
+    
+    ImGui::Text("Entity ID: %d", selectedEntity);
+    ImGui::Text("Name: %s", sel->name);
+    ImGui::Separator();
+    
+    // Transform component
+    Transform* t = ecs.GetTransform(selectedEntity);
+    if (t) {
+        if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::DragFloat3("Position", &t->position.X, 0.1f);
+            ImGui::DragFloat("Yaw", &t->yaw, 1.0f);
+            ImGui::DragFloat("Pitch", &t->pitch, 1.0f);
+            ImGui::DragFloat("Roll", &t->roll, 1.0f);
+        }
+    }
+    
+    // Light component
+    Light* light = ecs.GetLight(selectedEntity);
+    if (light) {
+        if (ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::ColorEdit3("Color", &light->color.X);
+            ImGui::DragFloat("Intensity", &light->intensity, 0.1f, 0.0f, 100.0f);
+            ImGui::DragFloat("Radius", &light->radius, 0.5f, 0.1f, 1000.0f);
+            ImGui::Checkbox("Enabled", &light->enabled);
+        }
+    }
+    
+    // Rigidbody component
+    Rigidbody* rb = ecs.GetRigidbody(selectedEntity);
+    if (rb) {
+        if (ImGui::CollapsingHeader("Rigidbody")) {
+            ImGui::DragFloat3("Velocity", &rb->velocity.X, 0.1f);
+            ImGui::DragFloat("Mass", &rb->mass, 0.1f, 0.1f, 1000.0f);
+            ImGui::Checkbox("Affected By Gravity", &rb->affectedByGravity);
+        }
+    }
+    
+    // AI component
+    AIController* ai = ecs.GetAI(selectedEntity);
+    if (ai) {
+        if (ImGui::CollapsingHeader("AI Controller")) {
+            const char* stateNames[] = { "Idle", "Wander", "Chase" };
+            int currentState = (int)ai->state;
+            if (ImGui::Combo("State", &currentState, stateNames, 3)) {
+                ai->state = (AIState)currentState;
+            }
+            ImGui::DragFloat("State Timer", &ai->stateTimer, 0.1f);
+            ImGui::DragFloat3("Wander Target", &ai->wanderTarget.X, 0.1f);
+        }
+    }
+    
+    // Billboard component
+    Billboard* billboard = ecs.GetBillboard(selectedEntity);
+    if (billboard) {
+        if (ImGui::CollapsingHeader("Billboard")) {
+            ImGui::InputInt("Follow Target ID", &billboard->followTarget);
+            ImGui::DragFloat3("Offset", &billboard->offset.X, 0.1f);
+            ImGui::Checkbox("Lock Y Axis", &billboard->lockY);
+        }
+    }
+    
+    // Screen Space component
+    ScreenSpace* ss = ecs.GetScreenSpace(selectedEntity);
+    if (ss) {
+        if (ImGui::CollapsingHeader("Screen Space")) {
+            ImGui::DragFloat2("Screen Position", &ss->screenPosition.X, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat2("Size", &ss->size.X, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Depth", &ss->depth, 0.01f, 0.0f, 1.0f);
+        }
+    }
+    
+    ImGui::Separator();
+    if (ImGui::Button("Deselect")) {
+        selectedEntity = -1;
+        // Clear selection flag
+        if (sel) sel->isSelected = false;
+    }
+}
+
+// Helper to create a wireframe box mesh (using thin triangles for lines)
+Model3D CreateWireframeBox(float sizeX, float sizeY, float sizeZ, float r, float g, float b) {
+    Model3D box = {};
+    
+    // We'll create thin quads for each edge to simulate lines
+    // 12 edges * 4 vertices per quad = 48 vertices
+    // 12 edges * 6 indices per quad = 72 indices
+    box.vertex_count = 48;
+    box.vertices = (Vertex*)malloc(48 * sizeof(Vertex));
+    
+    box.index_count = 72;
+    box.indices = (uint16_t*)malloc(72 * sizeof(uint16_t));
+    
+    float hx = sizeX * 0.5f;
+    float hy = sizeY * 0.5f;
+    float hz = sizeZ * 0.5f;
+    float lineWidth = 0.05f; // Width of the "line" quads (made thicker for visibility)
+    
+    // Define 8 corners of the box
+    hmm_vec3 corners[8] = {
+        HMM_Vec3(-hx, -hy, -hz), // 0: bottom-front-left
+        HMM_Vec3( hx, -hy, -hz), // 1: bottom-front-right
+        HMM_Vec3( hx,  hy, -hz), // 2: top-front-right
+        HMM_Vec3(-hx,  hy, -hz), // 3: top-front-left
+        HMM_Vec3(-hx, -hy,  hz), // 4: bottom-back-left
+        HMM_Vec3( hx, -hy,  hz), // 5: bottom-back-right
+        HMM_Vec3( hx,  hy,  hz), // 6: top-back-right
+        HMM_Vec3(-hx,  hy,  hz)  // 7: top-back-left
+    };
+    
+    // Define 12 edges as pairs of corner indices
+    int edges[12][2] = {
+        // Bottom face
+        {0, 1}, {1, 5}, {5, 4}, {4, 0},
+        // Top face
+        {3, 2}, {2, 6}, {6, 7}, {7, 3},
+        // Vertical edges
+        {0, 3}, {1, 2}, {5, 6}, {4, 7}
+    };
+    
+    int vIdx = 0;
+    int iIdx = 0;
+    
+    // Create a thin quad for each edge
+    for (int e = 0; e < 12; ++e) {
+        hmm_vec3 p1 = corners[edges[e][0]];
+        hmm_vec3 p2 = corners[edges[e][1]];
+        
+        // Calculate edge direction and perpendicular
+        hmm_vec3 edgeDir = HMM_NormalizeVec3(HMM_SubtractVec3(p2, p1));
+        hmm_vec3 up = HMM_Vec3(0.0f, 1.0f, 0.0f);
+        hmm_vec3 perp = HMM_NormalizeVec3(HMM_Cross(edgeDir, up));
+        
+        // If perpendicular is zero (edge is vertical), use different perpendicular
+        if (HMM_LengthVec3(perp) < 0.001f) {
+            perp = HMM_Vec3(1.0f, 0.0f, 0.0f);
+        }
+        
+        // Create 4 vertices for a thin quad representing the line
+        for (int i = 0; i < 4; ++i) {
+            Vertex& v = box.vertices[vIdx + i];
+            
+            // Determine position based on quad corner
+            hmm_vec3 basePos = (i < 2) ? p1 : p2;
+            hmm_vec3 offset = HMM_Vec3(
+                perp.X * lineWidth * ((i % 2 == 0) ? -1.0f : 1.0f),
+                perp.Y * lineWidth * ((i % 2 == 0) ? -1.0f : 1.0f),
+                perp.Z * lineWidth * ((i % 2 == 0) ? -1.0f : 1.0f)
+            );
+            hmm_vec3 finalPos = HMM_AddVec3(basePos, offset);
+            
+            v.pos[0] = finalPos.X;
+            v.pos[1] = finalPos.Y;
+            v.pos[2] = finalPos.Z;
+            
+            v.normal[0] = perp.X;
+            v.normal[1] = perp.Y;
+            v.normal[2] = perp.Z;
+            
+            v.uv[0] = 0.0f;
+            v.uv[1] = 0.0f;
+            
+            // Use provided color
+            v.color[0] = r;
+            v.color[1] = g;
+            v.color[2] = b;
+            v.color[3] = 1.0f;
+        }
+        
+        // Create indices for the quad (2 triangles)
+        box.indices[iIdx++] = (uint16_t)(vIdx + 0);
+        box.indices[iIdx++] = (uint16_t)(vIdx + 1);
+        box.indices[iIdx++] = (uint16_t)(vIdx + 2);
+        
+        box.indices[iIdx++] = (uint16_t)(vIdx + 2);
+        box.indices[iIdx++] = (uint16_t)(vIdx + 3);
+        box.indices[iIdx++] = (uint16_t)(vIdx + 0);
+        
+        vIdx += 4;
+    }
+    
+    box.has_texture = false;
+    box.texture_data = nullptr;
+    
+    return box;
+}
+
+// Helper to create or update wireframe for an entity
+void CreateOrUpdateWireframe(EntityId entityId, bool isSelected) {
+    Selectable* sel = ecs.GetSelectable(entityId);
+    Transform* t = ecs.GetTransform(entityId);
+    if (!sel || !t) return;
+    
+    // Check if wireframe already exists
+    EntityId wireframeEntity = -1;
+    auto it = entityWireframes.find(entityId);
+    
+    if (it == entityWireframes.end()) {
+        // Create new wireframe entity
+        wireframeEntity = ecs.CreateEntity();
+        entityWireframes[entityId] = wireframeEntity;
+        
+        // Add transform and renderable
+        Transform wireTransform;
+        wireTransform.position = t->position;
+        ecs.AddTransform(wireframeEntity, wireTransform);
+        
+        // Use appropriate color mesh
+        int meshId = isSelected ? wireframeOrangeMeshId : wireframeYellowMeshId;
+        ecs.AddRenderable(wireframeEntity, meshId, renderer);
+    } else {
+        wireframeEntity = it->second;
+    }
+    
+    // Update wireframe transform to match entity
+    Transform* wireTransform = ecs.GetTransform(wireframeEntity);
+    if (wireTransform) {
+        wireTransform->position = t->position;
+        
+        // Scale to match bounding radius
+        float size = sel->boundingRadius * 2.0f * 1.15f; // Slightly larger
+        hmm_mat4 translation = HMM_Translate(t->position);
+        hmm_mat4 scale = HMM_Scale(HMM_Vec3(size / 2.0f, size / 2.0f, size / 2.0f));
+        wireTransform->customMatrix = HMM_MultiplyMat4(translation, scale);
+        wireTransform->useCustomMatrix = true;
+    }
+    
+    // Update mesh if selection changed
+    int currentMeshId = ecs.GetMeshId(wireframeEntity);
+    int desiredMeshId = isSelected ? wireframeOrangeMeshId : wireframeYellowMeshId;
+    if (currentMeshId != desiredMeshId) {
+        // Remove old renderable and add new one with different color
+        ecs.RemoveRenderable(wireframeEntity, renderer);
+        ecs.AddRenderable(wireframeEntity, desiredMeshId, renderer);
+    }
+}
+
+// Helper to properly destroy wireframe entities when switching to playing mode
+void DestroyAllWireframes() {
+    printf("DestroyAllWireframes called - destroying %zu wireframes\n", entityWireframes.size());
+    
+    for (auto& [entityId, wireframeEntity] : entityWireframes) {
+        printf("  Destroying wireframe entity %d for entity %d\n", wireframeEntity, entityId);
+        
+        // Get the instance ID before destroying
+        int instanceId = ecs.GetInstanceId(wireframeEntity);
+        
+        // Remove from renderer first
+        ecs.RemoveRenderable(wireframeEntity, renderer);
+        
+        // Destroy the entity from ECS
+        ecs.DestroyEntity(wireframeEntity);
+        
+        printf("    Removed instance %d, destroyed entity %d\n", instanceId, wireframeEntity);
+    }
+    entityWireframes.clear();
+    printf("DestroyAllWireframes complete - map cleared\n");
 }
 
 void init(void) {
@@ -98,7 +392,7 @@ void init(void) {
     printf("=== DEBUG CONSOLE ALLOCATED ===\n");
     #endif
 
-    // Capture and lock the cursor
+    // Start in playing mode with locked cursor
     sapp_lock_mouse(true);
     sapp_show_mouse(false);
 
@@ -116,22 +410,13 @@ void init(void) {
     // UI
     ui.Setup();
     
-    // Set callback for GUI visibility changes (IMPORTANT - THIS WAS MISSING!)
+    // Set callback for GUI visibility changes
     ui.SetGuiVisibilityCallback(OnGuiVisibilityChanged);
 
     // register a simple ImGui callback (you can add more / modify)
     ui.AddGuiCallback([](){
-        ImGui::Separator();
-        ImGui::Text("Example Controls:");
-        static float floatVal = 0.5f;
-        ImGui::SliderFloat("Example Float", &floatVal, 0.0f, 1.0f);
-        static int intVal = 5;
-        ImGui::InputInt("Example Int", &intVal);
-        static bool toggle = true;
-        ImGui::Checkbox("Example Toggle", &toggle);
-
         // Audio controls
-        ImGui::Separator();
+        //ImGui::Separator();
         ImGui::Text("Audio Controls:");
         if (audio.IsPlaying()) {
             if (ImGui::Button("Stop")) {
@@ -155,6 +440,15 @@ void init(void) {
         ImGui::Text("Press TAB to toggle modes");
         if (ImGui::Button("Toggle Mode (TAB)")) {
             gameState.ToggleMode();
+            UpdateCursorState(); // Update cursor when mode changes
+        }
+        
+        // Entity Inspector (EDIT MODE ONLY)
+        if (gameState.IsEdit()) {
+            ImGui::Separator();
+            if (ImGui::CollapsingHeader("Entity Inspector", ImGuiTreeNodeFlags_DefaultOpen)) {
+                RenderEntityInspector();
+            }
         }
         
         // Camera controls
@@ -205,9 +499,18 @@ void init(void) {
         printf("ERROR: Failed to add ground mesh!\n");
     }
 
+    // Create wireframe meshes (two colors: yellow for unselected, orange for selected)
+    printf("\n=== CREATING WIREFRAME MESHES ===\n");
+    models3D[6] = CreateWireframeBox(2.0f, 2.0f, 2.0f, 1.0f, 1.0f, 0.0f); // Yellow
+    wireframeYellowMeshId = renderer.AddMesh(models3D[6]);
+    printf("Yellow wireframe mesh ID: %d\n", wireframeYellowMeshId);
+    
+    models3D[7] = CreateWireframeBox(2.0f, 2.0f, 2.0f, 1.0f, 0.5f, 0.0f); // Orange
+    wireframeOrangeMeshId = renderer.AddMesh(models3D[7]);
+    printf("Orange wireframe mesh ID: %d\n", wireframeOrangeMeshId);
 
-        // Create player (ECS-driven)
-    printf("\n=== CREATING UI ===\n");
+    // Create player (ECS-driven)
+    printf("\n=== CREATING PLAYER ===\n");
     player = new PlayerController(ecs, renderer, meshPlayer, gameState);
     player->Spawn(HMM_Vec3(0.0f, 0.0f, 0.0f));
     printf("Player spawned at (0, 0, 0)\n");
@@ -220,11 +523,13 @@ void init(void) {
     groundTransform.yaw = 0.0f;
     ecs.AddTransform(groundEntity, groundTransform);
     ecs.AddRenderable(groundEntity, meshGround, renderer);
+    
+    // Add Selectable to ground (FIXED: Reduced bounding radius)
+    Selectable groundSel;
+    groundSel.name = "Ground";
+    groundSel.boundingRadius = 10.0f; // CHANGED from 50.0f to 10.0f
+    ecs.AddSelectable(groundEntity, groundSel);
     printf("Ground created\n");
-
-
-
-
 
     // Spawn trees randomly across the map
     printf("\n=== SPAWNING TREES ===\n");
@@ -244,6 +549,13 @@ void init(void) {
         
         ecs.AddTransform(treeId, t);
         ecs.AddRenderable(treeId, meshTree, renderer);
+        
+        // Add Selectable to trees
+        Selectable treeSel;
+        treeSel.name = "Tree";
+        treeSel.boundingRadius = 3.0f; // Approximate size
+        ecs.AddSelectable(treeId, treeSel);
+        
         treeEntities.push_back(treeId);
     }
     printf("Spawned %zu trees\n", treeEntities.size());
@@ -272,6 +584,13 @@ void init(void) {
         anim.time = 0.0f;
         ecs.AddAnimator(eid, anim);
         ecs.AddRenderable(eid, meshEnemy, renderer);
+        
+        // Add Selectable to enemies
+        Selectable enemySel;
+        enemySel.name = "Enemy";
+        enemySel.boundingRadius = 1.5f;
+        ecs.AddSelectable(eid, enemySel);
+        
         enemyEntities.push_back(eid);
     }
     printf("Spawned %zu enemies\n", enemyEntities.size());
@@ -341,7 +660,7 @@ void init(void) {
     
     // === CREATE LIGHTS ===
     printf("\n=== CREATING LIGHTS ===\n");
-    std::vector<EntityId> lightEntities;
+    lightEntities.clear();
 
     // Create several point lights around the scene
     for (int i = 0; i < 16; ++i) {
@@ -361,6 +680,13 @@ void init(void) {
         light.enabled = true;
         
         ecs.AddLight(lightId, light);
+        
+        // Add Selectable to lights
+        Selectable lightSel;
+        lightSel.name = "Point Light";
+        lightSel.boundingRadius = 2.0f;
+        ecs.AddSelectable(lightId, lightSel);
+        
         lightEntities.push_back(lightId);
         
         printf("Light %d created at (%.1f, %.1f, %.1f)\n", i, t.position.X, t.position.Y, t.position.Z);
@@ -381,7 +707,9 @@ void init(void) {
     printf("\n=== INITIALIZATION COMPLETE ===\n");
     printf("Press TAB to toggle between PLAYING and EDIT modes\n");
     printf("Press F1 to open/close Debug GUI\n");
-    printf("Press F11 to toggle fullscreen\n\n");
+    printf("Press F11 to toggle fullscreen\n");
+    printf("In EDIT mode, all selectable entities show yellow wireframes\n");
+    printf("Selected entities show orange wireframes\n\n");
 }
 
 void frame(void) {
@@ -397,10 +725,25 @@ void frame(void) {
     const char* modeText = gameState.IsPlaying() ? "PLAYING" : "EDIT";
     char debugText[256];
     snprintf(debugText, sizeof(debugText), 
-             "Trees Demo - WASD to move, Mouse to look, Scroll to zoom, TAB to toggle mode, F1 for GUI, F11 for fullscreen\nCurrent: %s", 
-             modeText);
+             "Trees Demo - WASD to move, Mouse to look, Scroll to zoom, TAB to toggle mode, F1 for GUI, F11 for fullscreen\nCurrent: %s%s", 
+             modeText,
+             (gameState.IsEdit() && selectedEntity != -1) ? " | Entity Selected" : "");
     ui.DebugText(debugText);
 
+    // FIXED: Proper wireframe management with mode tracking
+    static EntityId previousSelection = -1;
+    static bool wasInEditMode = false;
+    
+    bool modeChanged = (gameState.IsEdit() != wasInEditMode);
+    bool isEditMode = gameState.IsEdit();
+    
+    // CRITICAL: Destroy wireframes BEFORE any ECS updates
+    if (!isEditMode && !entityWireframes.empty()) {
+        printf("=== PLAYING MODE: Destroying wireframes ===\n");
+        DestroyAllWireframes();
+        previousSelection = -1;
+    }
+    
     // update player
     if (player) player->Update(dt);
 
@@ -418,8 +761,35 @@ void frame(void) {
     
     // Update screen-space positions
     ecs.UpdateScreenSpace((float)width, (float)height);
+    
+    // Update wireframes only in edit mode
+    if (isEditMode) {
+        const auto& selectables = ecs.GetSelectables();
+        bool selectionChanged = (selectedEntity != previousSelection);
+        
+        for (const auto& [entityId, selectable] : selectables) {
+            bool isSelected = (entityId == selectedEntity);
+            bool forceUpdate = (selectionChanged && (entityId == selectedEntity || entityId == previousSelection)) || modeChanged;
+            
+            if (forceUpdate) {
+                auto it = entityWireframes.find(entityId);
+                if (it != entityWireframes.end()) {
+                    EntityId oldWireframe = it->second;
+                    ecs.RemoveRenderable(oldWireframe, renderer);
+                    ecs.DestroyEntity(oldWireframe);
+                    entityWireframes.erase(it);
+                }
+            }
+            
+            CreateOrUpdateWireframe(entityId, isSelected);
+        }
+        
+        previousSelection = selectedEntity;
+    }
+    
+    wasInEditMode = isEditMode;
 
-    // sync transforms to renderer
+    // Sync transforms to renderer
     ecs.SyncToRenderer(renderer);
 
     // compute view-proj for 3D rendering
@@ -494,6 +864,47 @@ void cleanup(void) {
     }
 }
 
+// Helper to convert mouse screen position to world ray
+hmm_vec3 ScreenToWorldRay(float mouseX, float mouseY, int screenWidth, int screenHeight,
+        const hmm_mat4 &viewMatrix, const hmm_mat4 &projMatrix) {
+    // Convert mouse position to normalized device coordinates (NDC)
+    float ndcX = (2.0f * mouseX) / screenWidth - 1.0f;
+    float ndcY = 1.0f - (2.0f * mouseY) / screenHeight; // Flip Y
+
+    // Extract camera basis vectors from view matrix (column-major)
+    // In a view matrix: right = column 0, up = column 1, forward = -column 2
+    // But we need WORLD space vectors, not view space
+    // The inverse view matrix has: right = row 0, up = row 1, back = row 2
+
+    // For HandmadeMath column-major matrices:
+    // Elements[col][row]
+    // So to get row 0: Elements[0][0], Elements[1][0], Elements[2][0]
+    hmm_vec3 right = HMM_Vec3(viewMatrix.Elements[0][0], viewMatrix.Elements[1][0], viewMatrix.Elements[2][0]);
+    hmm_vec3 up = HMM_Vec3(viewMatrix.Elements[0][1], viewMatrix.Elements[1][1], viewMatrix.Elements[2][1]);
+    hmm_vec3 forward = HMM_Vec3(-viewMatrix.Elements[0][2], -viewMatrix.Elements[1][2], -viewMatrix.Elements[2][2]);
+
+    // Extract FOV from projection matrix
+    float fovY = 2.0f * HMM_ATANF(1.0f / projMatrix.Elements[1][1]);
+    float aspectRatio = projMatrix.Elements[1][1] / projMatrix.Elements[0][0];
+
+    // Calculate half-angles
+    float halfFovY = fovY * 0.5f;
+    float halfFovX = HMM_ATANF(HMM_TANF(halfFovY) * aspectRatio);
+
+    // Calculate ray direction
+    // Start with forward direction, then offset by mouse position
+    float tanHalfFovX = HMM_TANF(halfFovX);
+    float tanHalfFovY = HMM_TANF(halfFovY);
+
+    hmm_vec3 rayDir = HMM_AddVec3(
+            HMM_AddVec3(
+                    forward,
+                    HMM_MultiplyVec3f(right, ndcX * tanHalfFovX)),
+            HMM_MultiplyVec3f(up, ndcY * tanHalfFovY));
+
+    return HMM_NormalizeVec3(rayDir);
+}
+
 static void input(const sapp_event* ev) {
     // Handle resize events - this triggers on fullscreen toggle too
     if (ev->type == SAPP_EVENTTYPE_RESIZED) {
@@ -505,17 +916,79 @@ static void input(const sapp_event* ev) {
     if (ev->type == SAPP_EVENTTYPE_KEY_DOWN && ev->key_code == SAPP_KEYCODE_F11) {
         sapp_toggle_fullscreen();
         printf("Fullscreen toggled\n");
-        // Note: The SAPP_EVENTTYPE_RESIZED event will be triggered automatically
-        // and will call renderer.OnResize(), so we don't need to do it here
         return; // Consume the event
+    }
+    
+    // Handle TAB key for mode switching
+    if (ev->type == SAPP_EVENTTYPE_KEY_DOWN && ev->key_code == SAPP_KEYCODE_TAB) {
+        gameState.ToggleMode();
+        UpdateCursorState(); // Update cursor state when mode changes
+        printf("Mode switched to %s\n", gameState.IsEdit() ? "EDIT" : "PLAYING");
+        return; // Consume the event
+    }
+    
+    // Handle mouse clicks for entity selection (EDIT MODE ONLY)
+    if (ev->type == SAPP_EVENTTYPE_MOUSE_DOWN && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT && gameState.IsEdit()) {
+        // Check if mouse is over ImGui window
+        if (ui.IsGuiVisible() && ImGui::GetIO().WantCaptureMouse) {
+            // Let ImGui handle the click (user is clicking on GUI)
+        } else {
+            // Perform entity selection with proper mouse-to-world ray
+            if (player) {
+                // Get screen dimensions
+                int screenWidth = sapp_width();
+                int screenHeight = sapp_height();
+                
+                // Get mouse position (in screen coordinates)
+                float mouseX = ev->mouse_x;
+                float mouseY = ev->mouse_y;
+                
+                // Get camera matrices
+                hmm_mat4 proj = HMM_Perspective(60.0f, (float)screenWidth / (float)screenHeight, 0.01f, 1000.0f);
+                hmm_mat4 view = player->GetViewMatrix();
+                
+                // Calculate ray from camera through mouse cursor
+                hmm_vec3 rayOrigin = player->CameraPosition();
+                hmm_vec3 rayDir = ScreenToWorldRay(mouseX, mouseY, screenWidth, screenHeight, view, proj);
+                
+                printf("Mouse ray: origin=(%.2f, %.2f, %.2f) dir=(%.2f, %.2f, %.2f)\n",
+                       rayOrigin.X, rayOrigin.Y, rayOrigin.Z,
+                       rayDir.X, rayDir.Y, rayDir.Z);
+                
+                // Perform raycast
+                EntityId hitEntity = ecs.RaycastSelection(rayOrigin, rayDir, 1000.0f);
+                
+                // Always clear previous selection first
+                if (selectedEntity != -1) {
+                    Selectable* prevSel = ecs.GetSelectable(selectedEntity);
+                    if (prevSel) prevSel->isSelected = false;
+                }
+                
+                // Set new selection
+                selectedEntity = hitEntity;
+                
+                if (selectedEntity != -1) {
+                    Selectable* sel = ecs.GetSelectable(selectedEntity);
+                    if (sel) {
+                        sel->isSelected = true;
+                        printf("Selected entity %d (%s)\n", selectedEntity, sel->name);
+                    }
+                } else {
+                    printf("No entity selected (mouse ray missed all objects)\n");
+                }
+            }
+        }
     }
     
     // forward events to UI manager
     ui.HandleEvent(ev);
     
-    // forward to player for input handling (IMPORTANT - ONLY IF GUI NOT VISIBLE!)
-    if (player && !ui.IsGuiVisible()) {
-        player->HandleEvent(ev);
+    // forward to player for input handling
+    if (player) {
+        bool shouldHandleInput = gameState.IsEdit() ? !ui.IsGuiVisible() : !ui.IsGuiVisible();
+        if (shouldHandleInput) {
+            player->HandleEvent(ev);
+        }
     }
 }
 

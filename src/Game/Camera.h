@@ -29,8 +29,11 @@ public:
     // Get free camera position (Edit mode)
     hmm_vec3 GetFreeCameraPosition() const { return freeCameraPosition_; }
     
-    // Get camera forward direction (for player movement)
+    // Get camera forward direction (2D, for player movement on ground)
     hmm_vec3 GetForwardDirection() const;
+    
+    // Get camera forward direction (3D, includes pitch - for raycasting)
+    hmm_vec3 GetForward3D() const;
     
     // Get camera right direction (for player movement)
     hmm_vec3 GetRightDirection() const;

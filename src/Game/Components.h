@@ -78,3 +78,12 @@ struct ScreenSpace {
     hmm_vec2 size{0.1f, 0.1f}; // Size in screen space (0-1 range)
     float depth = 0.0f; // Depth for layering (0 = front, 1 = back)
 };
+
+// NOTE: Light struct is defined in include/Model.h - use that instead of redefining here
+
+// Selectable component - marks entity as selectable in edit mode
+struct Selectable {
+    bool isSelected = false;
+    float boundingRadius = 1.0f; // Radius for picking sphere
+    const char* name = "Entity"; // Display name in inspector
+};

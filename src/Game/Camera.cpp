@@ -10,7 +10,8 @@ Camera::Camera() {
 }
 
 void Camera::ProcessMouseMovement(float dx, float dy) {
-    yaw_ += dx * sensitivity_;
+    // FIXED: Use normal direction (removed inversion)
+    yaw_ += dx * sensitivity_;  // Changed back from -= to +=
     pitch_ += -dy * sensitivity_;
     
     if (clampPitch_) {
@@ -126,7 +127,17 @@ hmm_vec3 Camera::GetForwardDirection() const {
 }
 
 hmm_vec3 Camera::GetRightDirection() const {
-    return HMM_Vec3(cosf(yaw_), 0.0f, sinf(yaw_));
+    // FIXED: Negate to match inverted yaw direction
+    return HMM_Vec3(-cosf(yaw_), 0.0f, -sinf(yaw_)); // Added negative signs
+}
+
+hmm_vec3 Camera::GetForward3D() const {
+    // Returns the full 3D forward direction including pitch (for raycasting)
+    return HMM_Vec3(
+        -sinf(yaw_) * cosf(pitch_),
+        sinf(pitch_),
+        cosf(yaw_) * cosf(pitch_)
+    );
 }
 
 void Camera::RenderImGuiControls() {

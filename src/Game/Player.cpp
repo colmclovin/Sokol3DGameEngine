@@ -35,8 +35,8 @@ void PlayerController::Spawn(const hmm_vec3& pos) {
     // Create render instance
     ecs_.AddRenderable(entityId_, meshId_, renderer_);
     
-    // Initialize model yaw to match camera
-    modelYaw_ = camera_.GetYaw();
+    // FIXED: Initialize model yaw with inverted camera yaw
+    modelYaw_ = -camera_.GetYaw(); // Added negative sign
     
     printf("Player spawned: camYaw=%.2f, modelYaw=%.2f\n", camera_.GetYaw(), modelYaw_);
 }
@@ -174,16 +174,17 @@ void PlayerController::Update(float dt) {
         float speed = moveSpeed_ * (sprint_ ? 2.0f : 1.0f);
         hmm_vec3 delta = HMM_Vec3(0.0f, 0.0f, 0.0f);
         
-        // FIXED: Corrected the direction signs for left/right movement
+        // FIXED: Corrected direction signs for proper left/right movement
         if (forward_)  delta = HMM_AddVec3(delta, HMM_Vec3(forward_dir.X * speed * dt, forward_dir.Y * speed * dt, forward_dir.Z * speed * dt));
         if (back_)     delta = HMM_AddVec3(delta, HMM_Vec3(-forward_dir.X * speed * dt, -forward_dir.Y * speed * dt, -forward_dir.Z * speed * dt));
-        if (left_)     delta = HMM_AddVec3(delta, HMM_Vec3(right_dir.X * speed * dt, right_dir.Y * speed * dt, right_dir.Z * speed * dt));
-        if (right_)    delta = HMM_AddVec3(delta, HMM_Vec3(-right_dir.X * speed * dt, -right_dir.Y * speed * dt, -right_dir.Z * speed * dt));
+        if (left_)     delta = HMM_AddVec3(delta, HMM_Vec3(-right_dir.X * speed * dt, -right_dir.Y * speed * dt, -right_dir.Z * speed * dt)); // FIXED: Changed + to -
+        if (right_)    delta = HMM_AddVec3(delta, HMM_Vec3(right_dir.X * speed * dt, right_dir.Y * speed * dt, right_dir.Z * speed * dt));     // FIXED: Changed - to +
         
         t->position = HMM_AddVec3(t->position, delta);
 
-        // Smoothly lerp model rotation to match camera yaw
-        modelYaw_ = LerpAngle(modelYaw_, camera_.GetYaw(), rotationSpeed_ * dt);
+        // FIXED: Invert camera yaw for player rotation to face the correct direction
+        float targetYaw = -camera_.GetYaw(); // Added negative sign
+        modelYaw_ = LerpAngle(modelYaw_, targetYaw, rotationSpeed_ * dt);
         
         // Convert radians to degrees for the transform (HMM_Rotate expects degrees)
         t->yaw = modelYaw_ * (180.0f / 3.14159265359f);

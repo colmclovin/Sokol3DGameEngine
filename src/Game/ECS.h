@@ -3,6 +3,7 @@
 #include "../../External/HandmadeMath.h"
 #include "../Renderer/Renderer.h"
 #include "Components.h"
+#include "../../include/Model.h" // Include for Light struct definition
 #include <unordered_map>
 #include <vector>
 #include <optional>
@@ -47,6 +48,10 @@ public:
     Light* GetLight(EntityId entity);
     void RemoveLight(EntityId entity);
 
+    void AddSelectable(EntityId id, const Selectable& sel);
+    Selectable* GetSelectable(EntityId id);
+    bool HasSelectable(EntityId id) const;
+
     // Rendering linkage
     // Adds a renderable component (meshId) and creates instance via renderer.
     // Returns instance id or -1 on failure.
@@ -63,6 +68,9 @@ public:
     void UpdateBillboards(const hmm_vec3& cameraPosition);
     void UpdateScreenSpace(float screenWidth, float screenHeight);
 
+    // Selection system
+    EntityId RaycastSelection(const hmm_vec3& rayOrigin, const hmm_vec3& rayDir, float maxDistance = 1000.0f);
+
     // Sync transforms to renderer (call after systems)
     void SyncToRenderer(Renderer& renderer);
     
@@ -74,6 +82,7 @@ public:
 
     const std::unordered_map<EntityId, Light>& GetLights() const { return lights_; }
     const std::unordered_map<EntityId, Transform>& GetTransforms() const { return transforms_; }
+    const std::unordered_map<EntityId, Selectable>& GetSelectables() const { return selectables_; }
 
 private:
     EntityId nextId_ = 1;
@@ -86,6 +95,7 @@ private:
     std::unordered_map<EntityId, Billboard> billboards_;
     std::unordered_map<EntityId, ScreenSpace> screen_spaces_;
     std::unordered_map<EntityId, Light> lights_;
+    std::unordered_map<EntityId, Selectable> selectables_;
 
     // rendering maps
     std::unordered_map<EntityId, int> mesh_for_entity_;

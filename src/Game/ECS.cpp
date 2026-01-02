@@ -18,8 +18,10 @@ void ECS::DestroyEntity(EntityId id) {
     animators_.erase(id);
     mesh_for_entity_.erase(id);
     instance_for_entity_.erase(id);
-    billboards_.erase(id); // Added this line
-    screen_spaces_.erase(id); // Added this line
+    billboards_.erase(id);
+    screen_spaces_.erase(id);
+    lights_.erase(id);
+    selectables_.erase(id);
     alive_.erase(std::remove(alive_.begin(), alive_.end(), id), alive_.end());
 }
 
@@ -74,7 +76,9 @@ int ECS::GetMeshId(EntityId id) const {
 void ECS::RemoveRenderable(EntityId id, Renderer& renderer) {
     auto it = instance_for_entity_.find(id);
     if (it != instance_for_entity_.end()) {
-        // Note: Renderer has no RemoveInstance by id in current API; implement later if needed.
+        // FIXED: Actually remove the instance from the renderer
+        int instanceId = it->second;
+        renderer.RemoveInstance(instanceId);
         instance_for_entity_.erase(it);
     }
     mesh_for_entity_.erase(id);
@@ -353,13 +357,6 @@ void ECS::SyncToRenderer(Renderer& renderer) {
         if (t && instId >= 0) {
             hmm_mat4 modelMatrix = t->ModelMatrix();
             renderer.UpdateInstanceTransform(instId, modelMatrix);
-            
-            //// Debug: Print player entity sync (entity ID 1)
-            //if (++syncCounter >= 60 && id == 1) {
-            //    printf("ECS::SyncToRenderer - Entity %d, InstanceId %d, yaw=%.1f deg\n", 
-            //           id, instId, t->yaw);
-            //    syncCounter = 0;
-            //}
         }
     }
 }
@@ -375,4 +372,46 @@ Light* ECS::GetLight(EntityId entity) {
 
 void ECS::RemoveLight(EntityId entity) {
     lights_.erase(entity);
+}
+
+// Selectable component methods
+void ECS::AddSelectable(EntityId id, const Selectable& sel) {
+    selectables_[id] = sel;
+}
+
+Selectable* ECS::GetSelectable(EntityId id) {
+    auto it = selectables_.find(id);
+    return (it != selectables_.end()) ? &it->second : nullptr;
+}
+
+bool ECS::HasSelectable(EntityId id) const {
+    return selectables_.find(id) != selectables_.end();
+}
+
+// Ray-sphere intersection for entity picking
+EntityId ECS::RaycastSelection(const hmm_vec3& rayOrigin, const hmm_vec3& rayDir, float maxDistance) {
+    EntityId closestEntity = -1;
+    float closestDist = maxDistance;
+    
+    for (const auto& [id, selectable] : selectables_) {
+        Transform* t = GetTransform(id);
+        if (!t) continue;
+        
+        // Ray-sphere intersection
+        hmm_vec3 oc = HMM_SubtractVec3(rayOrigin, t->position);
+        float a = HMM_DotVec3(rayDir, rayDir);
+        float b = 2.0f * HMM_DotVec3(oc, rayDir);
+        float c = HMM_DotVec3(oc, oc) - selectable.boundingRadius * selectable.boundingRadius;
+        float discriminant = b * b - 4 * a * c;
+        
+        if (discriminant >= 0.0f) {
+            float t1 = (-b - sqrtf(discriminant)) / (2.0f * a);
+            if (t1 > 0.0f && t1 < closestDist) {
+                closestDist = t1;
+                closestEntity = id;
+            }
+        }
+    }
+    
+    return closestEntity;
 }

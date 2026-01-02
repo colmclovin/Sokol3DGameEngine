@@ -45,38 +45,32 @@ void UIManager::NewFrame(int width, int height, float dt, float dpi_scale) {
 void UIManager::Render() {
     // Render ImGui windows if visible
     if (gui_visible_) {
-        ImGui::SetNextWindowSize(ImVec2(350, 300), ImGuiCond_FirstUseEver);
-        ImGui::Begin("Debug GUI", &gui_visible_, ImGuiWindowFlags_None);
+        ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Debug GUI", &gui_visible_, ImGuiWindowFlags_None)) {
+            // debug-text controls
+            if (ImGui::CollapsingHeader("DebugText (sdtx)")) {
+                bool changed = false;
+                float w = dbg_canvas_w_, h = dbg_canvas_h_;
+                changed |= ImGui::SliderFloat("Canvas Width", &w, 64.0f, 4096.0f);
+                changed |= ImGui::SliderFloat("Canvas Height", &h, 64.0f, 4096.0f);
+                if (changed) SetDebugCanvas(w, h);
 
-        // toggle demo window
-        ImGui::Checkbox("Show ImGui Demo", &show_demo_window_);
+                float ox = dbg_origin_x_, oy = dbg_origin_y_;
+                if (ImGui::DragFloat2("Origin (x,y)", &ox, 0.1f)) SetDebugOrigin(ox, oy);
 
-        // debug-text controls
-        if (ImGui::CollapsingHeader("DebugText (sdtx)")) {
-            bool changed = false;
-            float w = dbg_canvas_w_, h = dbg_canvas_h_;
-            changed |= ImGui::SliderFloat("Canvas Width", &w, 64.0f, 4096.0f);
-            changed |= ImGui::SliderFloat("Canvas Height", &h, 64.0f, 4096.0f);
-            if (changed) SetDebugCanvas(w, h);
+                int cr = dbg_r_, cg = dbg_g_, cb = dbg_b_;
+                if (ImGui::ColorEdit3("Text Color", reinterpret_cast<float*>(&cr))) {
+                    SetDebugColor((uint8_t)cr, (uint8_t)cg, (uint8_t)cb);
+                }
+            }
 
-            float ox = dbg_origin_x_, oy = dbg_origin_y_;
-            if (ImGui::DragFloat2("Origin (x,y)", &ox, 0.1f)) SetDebugOrigin(ox, oy);
-
-            int cr = dbg_r_, cg = dbg_g_, cb = dbg_b_;
-            if (ImGui::ColorEdit3("Text Color", reinterpret_cast<float*>(&cr))) {
-                SetDebugColor((uint8_t)cr, (uint8_t)cg, (uint8_t)cb);
+            // call registered callbacks
+            if (!gui_callbacks_.empty()) {
+                for (const auto& cb : gui_callbacks_) {
+                    cb();
+                }
             }
         }
-
-        // call registered callbacks
-        if (!gui_callbacks_.empty()) {
-            ImGui::Separator();
-            ImGui::Text("Custom Panels:");
-            for (const auto& cb : gui_callbacks_) {
-                cb();
-            }
-        }
-
         ImGui::End();
         
         // Check if GUI was closed via X button
