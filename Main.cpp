@@ -1,4 +1,13 @@
-﻿#define SOKOL_D3D11
+﻿//TODO: cleanup main helper functions and stuff
+//TODO: clamping on camera pitch shouldnt apply in edit mode
+//TODO: collision detection
+//TODO: gravity
+//TODO: AI for enemies
+//TODO: ghost placement preview
+//TODO: offset origin for placement and collision to center cause its annoying
+
+
+#define SOKOL_D3D11
 #include "../External/Sokol/sokol_app.h"
 #include "../External/Sokol/sokol_fetch.h"
 #include "../External/Sokol/sokol_gfx.h"
