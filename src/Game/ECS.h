@@ -34,6 +34,18 @@ public:
 
     void AddAnimator(EntityId id, const Animator& a);
     Animator* GetAnimator(EntityId id);
+    
+    void AddBillboard(EntityId id, const Billboard& b);
+    Billboard* GetBillboard(EntityId id);
+    bool HasBillboard(EntityId id) const;
+    
+    void AddScreenSpace(EntityId id, const ScreenSpace& ss);
+    ScreenSpace* GetScreenSpace(EntityId id);
+    bool HasScreenSpace(EntityId id) const;
+
+    void AddLight(EntityId entity, const Light& light);
+    Light* GetLight(EntityId entity);
+    void RemoveLight(EntityId entity);
 
     // Rendering linkage
     // Adds a renderable component (meshId) and creates instance via renderer.
@@ -48,12 +60,20 @@ public:
     void UpdateAI(float dt);
     void UpdatePhysics(float dt);
     void UpdateAnimation(float dt);
+    void UpdateBillboards(const hmm_vec3& cameraPosition);
+    void UpdateScreenSpace(float screenWidth, float screenHeight);
 
     // Sync transforms to renderer (call after systems)
     void SyncToRenderer(Renderer& renderer);
+    
+    // Get all screen-space entities for separate rendering
+    std::vector<EntityId> GetScreenSpaceEntities() const;
 
     // Iterate helper
     std::vector<EntityId> AllEntities() const;
+
+    const std::unordered_map<EntityId, Light>& GetLights() const { return lights_; }
+    const std::unordered_map<EntityId, Transform>& GetTransforms() const { return transforms_; }
 
 private:
     EntityId nextId_ = 1;
@@ -63,6 +83,9 @@ private:
     std::unordered_map<EntityId, Rigidbody> rigidbodies_;
     std::unordered_map<EntityId, AIController> ai_controllers_;
     std::unordered_map<EntityId, Animator> animators_;
+    std::unordered_map<EntityId, Billboard> billboards_;
+    std::unordered_map<EntityId, ScreenSpace> screen_spaces_;
+    std::unordered_map<EntityId, Light> lights_;
 
     // rendering maps
     std::unordered_map<EntityId, int> mesh_for_entity_;

@@ -78,6 +78,13 @@ void UIManager::Render() {
         }
 
         ImGui::End();
+        
+        // Check if GUI was closed via X button
+        if (!gui_visible_) {
+            if (visibility_callback_) {
+                visibility_callback_(false);
+            }
+        }
 
         if (show_demo_window_) {
             ImGui::ShowDemoWindow(&show_demo_window_);
@@ -122,6 +129,12 @@ void UIManager::HandleEvent(const struct sapp_event* ev) {
     if (ev && ev->type == SAPP_EVENTTYPE_KEY_DOWN) {
         if (ev->key_code == SAPP_KEYCODE_F1) {
             gui_visible_ = !gui_visible_;
+            
+            // Notify about visibility change
+            if (visibility_callback_) {
+                visibility_callback_(gui_visible_);
+            }
+            
             return; // consume toggle (still forward to simgui if desired)
         }
     }
@@ -133,10 +146,20 @@ void UIManager::HandleEvent(const struct sapp_event* ev) {
 
 void UIManager::ToggleGui() {
     gui_visible_ = !gui_visible_;
+    
+    // Notify about visibility change
+    if (visibility_callback_) {
+        visibility_callback_(gui_visible_);
+    }
 }
 
 void UIManager::SetGuiVisible(bool visible) {
     gui_visible_ = visible;
+    
+    // Notify about visibility change
+    if (visibility_callback_) {
+        visibility_callback_(gui_visible_);
+    }
 }
 
 bool UIManager::IsGuiVisible() const {
@@ -145,4 +168,8 @@ bool UIManager::IsGuiVisible() const {
 
 void UIManager::AddGuiCallback(const std::function<void()>& cb) {
     gui_callbacks_.push_back(cb);
+}
+
+void UIManager::SetGuiVisibilityCallback(const std::function<void(bool)>& cb) {
+    visibility_callback_ = cb;
 }

@@ -26,6 +26,9 @@ public:
     // Register a callback to draw custom ImGui widgets (called when GUI visible)
     void AddGuiCallback(const std::function<void()>& cb);
 
+    // Register a callback for when GUI visibility changes
+    void SetGuiVisibilityCallback(const std::function<void(bool)>& cb);
+
 private:
     // internal state
     bool gui_visible_ = false;
@@ -39,4 +42,5 @@ private:
     uint8_t dbg_r_ = 255, dbg_g_ = 255, dbg_b_ = 255;
 
     std::vector<std::function<void()>> gui_callbacks_;
+    std::function<void(bool)> visibility_callback_;
 };

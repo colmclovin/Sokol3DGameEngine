@@ -33,6 +33,8 @@ add_executable(Game WIN32
     src/Renderer/Renderer.cpp
     src/Game/ECS.cpp
     src/Game/Player.cpp
+    src/Game/Camera.cpp
+    src/Geometry/Quad.cpp
     src/ThirdParty/SokolLog.cpp
     src/Audio/AudioEngine.cpp
     src/Model/ModelLoader.cpp

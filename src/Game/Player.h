@@ -1,6 +1,8 @@
 #pragma once
 
 #include "../Game/ECS.h"
+#include "../Game/Camera.h"
+#include "../Game/GameState.h"
 #include "../../External/HandmadeMath.h"
 #include "../../../External/Sokol/sokol_app.h"
 #include <cstdint>
@@ -10,7 +12,7 @@
 
 class PlayerController {
 public:
-    PlayerController(ECS& ecs, Renderer& renderer, int meshId);
+    PlayerController(ECS& ecs, Renderer& renderer, int meshId, GameStateManager& gameState);
     ~PlayerController();
 
     // spawn player at position
@@ -28,24 +30,29 @@ public:
 
     EntityId Entity() const { return entityId_; }
 
+    // Access to camera for ImGui controls
+    Camera& GetCamera() { return camera_; }
+    
+    // Enable/disable input processing (used when GUI is open)
+    void SetInputEnabled(bool enabled) { inputEnabled_ = enabled; }
+
 private:
     ECS& ecs_;
     Renderer& renderer_;
+    GameStateManager& gameState_;
     int meshId_;
     EntityId entityId_ = -1;
 
-    // local camera params
-    float camDistance_ = 6.0f;
-    float camPitch_ = 0.2f;
-    float camYaw_ = 0.0f;
+    // Camera system
+    Camera camera_;
 
     // model rotation (lerped)
     float modelYaw_ = 0.0f;
 
     // input state
     bool forward_ = false, back_ = false, left_ = false, right_ = false, sprint_ = false;
-    bool right_mouse_down_ = false;
-    float last_mouse_x_ = 0.0f, last_mouse_y_ = 0.0f;
+    bool up_ = false, down_ = false; // For Edit mode vertical movement
+    bool inputEnabled_ = true; // Input processing enabled/disabled
 
     float moveSpeed_ = 6.0f;
     float rotationSpeed_ = 5.0f; // How fast the model rotates to match camera
