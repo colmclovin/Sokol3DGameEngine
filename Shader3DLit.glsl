@@ -6,7 +6,7 @@
 layout(binding=0) uniform vs_params {
     mat4 mvp;
     mat4 model; 
-    float is_screen_space; // 1.0 for screen-space HUD, 0.0 for world-space
+    float is_screen_space;
 };
 
 in vec3 pos;
@@ -14,14 +14,13 @@ in vec3 normal_in;
 in vec2 uv_in;
 in vec4 color_in;
 
-// Instance data (4x vec4 = mat4)
 in vec4 inst_row0;
 in vec4 inst_row1;
 in vec4 inst_row2;
 in vec4 inst_row3;
 
 out vec2 uv;
-out vec3 world_pos;       // World-space position for lighting
+out vec3 world_pos;
 out vec3 world_normal;
 out vec4 vertex_color;
 
@@ -32,7 +31,6 @@ void main() {
     gl_Position = mvp * world_position;
     world_pos = world_position.xyz;
     
-    // Transform normal to world space (assumes uniform scaling)
     mat3 normal_matrix = mat3(inst_transform);
     world_normal = normalize(normal_matrix * normal_in);
     
@@ -42,21 +40,17 @@ void main() {
 @end
 
 @fs Shader3DLit_fs
-// Maximum number of lights
-#define MAX_LIGHTS 8
+// REMOVED: No more MAX_LIGHTS limit
+// The actual limit is now determined by the C++ code and GPU capabilities
 
 layout(binding=1) uniform fs_params {
     // Light data packed into vec4 arrays
-    // light_data[i] = vec4(position.xyz, intensity)
-    vec4 light_data[MAX_LIGHTS];
-    // light_colors[i] = vec4(color.rgb, radius)
-    vec4 light_colors[MAX_LIGHTS];
-    // ambient_data = vec4(ambient_color.rgb, ambient_intensity)
+    // INCREASED: Support up to 512 lights (practical limit: ~1000 before hitting 64KB uniform buffer limit)
+    vec4 light_data[512];
+    vec4 light_colors[512];
     vec4 ambient_data;
-    // sun_data = vec4(direction.xyz, intensity)
     vec4 sun_data;
-    // sun_color_misc = vec4(color.rgb, light_count)
-    vec4 sun_color_misc;
+    vec4 sun_color_misc; // sun_color_misc.w = actual light count (0-512)
 };
 
 in vec2 uv;
@@ -83,10 +77,10 @@ void main() {
         lighting += sun_color * sun_intensity * sun_diff;
     }
     
+    // CHANGED: Loop through actual light count (no hardcoded MAX_LIGHTS check)
     int light_count = int(sun_color_misc.w);
     
-    // Calculate lighting from each point light
-    for (int i = 0; i < light_count && i < MAX_LIGHTS; i++) {
+    for (int i = 0; i < light_count; i++) {
         vec3 light_pos = light_data[i].xyz;
         float light_intensity = light_data[i].w;
         vec3 light_color = light_colors[i].xyz;
@@ -95,24 +89,19 @@ void main() {
         vec3 light_dir = light_pos - world_pos;
         float distance = length(light_dir);
         
-        // Skip if outside light radius
         if (distance > light_radius) continue;
         
         light_dir = normalize(light_dir);
         
-        // Diffuse lighting
         float diff = max(dot(normal, light_dir), 0.0);
         
-        // Attenuation (inverse square with radius)
         float attenuation = 1.0 - smoothstep(0.0, light_radius, distance);
-        attenuation *= attenuation; // Square for more dramatic falloff
+        attenuation *= attenuation;
         
-        // Add light contribution
         vec3 light_contribution = light_color * light_intensity * diff * attenuation;
         lighting += light_contribution;
     }
     
-    // Apply lighting to vertex color
     frag_color = vec4(vertex_color.rgb * lighting, vertex_color.a);
 }
 @end

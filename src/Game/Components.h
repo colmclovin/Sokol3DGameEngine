@@ -37,11 +37,44 @@ struct Transform {
     }
 };
 
+// Collider types
+enum class ColliderType : uint8_t {
+    Sphere = 0,
+    Box,
+    Capsule
+};
+
+// Collision data
+struct Collider {
+    ColliderType type = ColliderType::Sphere;
+    
+    // Sphere collider
+    float radius = 1.0f;
+    
+    // Box collider (AABB in local space)
+    hmm_vec3 boxHalfExtents{1.0f, 1.0f, 1.0f};
+    
+    // Capsule collider
+    float capsuleHeight = 2.0f;
+    float capsuleRadius = 0.5f;
+    
+    // Collision flags
+    bool isTrigger = false; // If true, no physics response (just detection)
+    bool isStatic = false;  // If true, object doesn't move from collisions
+    
+    // Collision groups (bitfield for filtering)
+    uint32_t collisionMask = 0xFFFFFFFF; // What this collides with
+    uint32_t collisionLayer = 0x00000001; // What layer this is on
+};
+
 // Simple rigidbody (kinematic support)
 struct Rigidbody {
     hmm_vec3 velocity{0.0f, 0.0f, 0.0f};
     float mass = 1.0f;
     bool affectedByGravity = true;
+    bool isKinematic = false; // If true, not affected by forces/collisions
+    float drag = 0.1f; // Air resistance (0 = no drag, 1 = high drag)
+    float bounciness = 0.0f; // Restitution coefficient (0 = no bounce, 1 = perfect bounce)
 };
 
 // Very small AI controller state

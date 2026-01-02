@@ -44,6 +44,12 @@ extern "C" void slog_to_debug(const char* tag,
 #include <cmath>
 #include <vector>
 #include <unordered_map>
+#include <algorithm>  // ADD THIS LINE for std::find
+// Add at the top with other static variables (around line 47):
+static int meshTreeId = -1;
+static int meshEnemyId = -1;
+static int meshPlayerId = -1;
+static int meshGroundId = -1;
 
 static Renderer renderer;
 static AudioEngine audio;
@@ -69,6 +75,11 @@ static std::unordered_map<EntityId, EntityId> entityWireframes; // Map entity ->
 
 // Selection state
 static EntityId selectedEntity = -1;
+
+// Entity placement system for edit mode
+static int placementMeshId = -1; // Which mesh to place
+static bool placementMode = false; // Is placement mode active?
+static EntityId ghostEntity = -1; // Preview entity while placing
 
 #define MAX_MODELS 32  // Increased to accommodate wireframe meshes
 Model3D models3D[MAX_MODELS];
@@ -449,6 +460,32 @@ void init(void) {
             if (ImGui::CollapsingHeader("Entity Inspector", ImGuiTreeNodeFlags_DefaultOpen)) {
                 RenderEntityInspector();
             }
+            
+            // Entity Placement (EDIT MODE ONLY) - ADD THIS BLOCK
+            ImGui::Separator();
+            if (ImGui::CollapsingHeader("Entity Placement")) {
+                ImGui::Text("Press 'G' to grab/place selected entity");
+                ImGui::Text("Press 'Delete' to delete selected entity");
+                
+                const char* entityTypes[] = { "Tree", "Enemy", "Light" };
+                static int selectedType = 0;
+                ImGui::Combo("Entity Type", &selectedType, entityTypes, 3);
+                
+                if (ImGui::Button("Start Placement Mode (P)")) {
+                    placementMode = !placementMode;
+                    if (placementMode) {
+                        // Set mesh based on selection
+                        if (selectedType == 0) placementMeshId = meshTreeId; // Tree - USE ACTUAL ID
+                        else if (selectedType == 1) placementMeshId = meshEnemyId; // Enemy - USE ACTUAL ID
+                        else placementMeshId = -1; // Light (no mesh)
+                    }
+                }
+                
+                if (placementMode) {
+                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "PLACEMENT MODE ACTIVE");
+                    ImGui::Text("Click to place, ESC to cancel");
+                }
+            }
         }
         
         // Camera controls
@@ -477,25 +514,25 @@ void init(void) {
    
 
     printf("\n=== ADDING MESHES TO RENDERER ===\n");
-    int meshTree = renderer.AddMesh(models3D[0]);
-    printf("Tree mesh ID: %d\n", meshTree);
+    meshTreeId = renderer.AddMesh(models3D[0]);
+    printf("Tree mesh ID: %d\n", meshTreeId);
     
-    int meshEnemy = renderer.AddMesh(models3D[1]);
-    printf("Enemy mesh ID: %d\n", meshEnemy);
+    meshEnemyId = renderer.AddMesh(models3D[1]);
+    printf("Enemy mesh ID: %d\n", meshEnemyId);
 
-    int meshPlayer = renderer.AddMesh(models3D[2]);
-    printf("Player mesh ID: %d\n", meshPlayer);
+    meshPlayerId = renderer.AddMesh(models3D[2]);
+    printf("Player mesh ID: %d\n", meshPlayerId);
     
-    int meshGround = renderer.AddMesh(models3D[3]);
-    printf("Ground mesh ID: %d\n", meshGround);
+    meshGroundId = renderer.AddMesh(models3D[3]);
+    printf("Ground mesh ID: %d\n", meshGroundId);
 
-    if (meshTree < 0) {
+    if (meshTreeId < 0) {
         printf("ERROR: Failed to add tree mesh!\n");
     }
-    if (meshPlayer < 0) {
+    if (meshPlayerId < 0) {
         printf("ERROR: Failed to add player mesh!\n");
     }
-    if (meshGround < 0) {
+    if (meshGroundId < 0) {
         printf("ERROR: Failed to add ground mesh!\n");
     }
 
@@ -511,7 +548,7 @@ void init(void) {
 
     // Create player (ECS-driven)
     printf("\n=== CREATING PLAYER ===\n");
-    player = new PlayerController(ecs, renderer, meshPlayer, gameState);
+    player = new PlayerController(ecs, renderer, meshPlayerId, gameState);
     player->Spawn(HMM_Vec3(0.0f, 0.0f, 0.0f));
     printf("Player spawned at (0, 0, 0)\n");
 
@@ -522,7 +559,7 @@ void init(void) {
     groundTransform.position = HMM_Vec3(0.0f, -4.0f, 0.0f);
     groundTransform.yaw = 0.0f;
     ecs.AddTransform(groundEntity, groundTransform);
-    ecs.AddRenderable(groundEntity, meshGround, renderer);
+    ecs.AddRenderable(groundEntity, meshGroundId, renderer);
     
     // Add Selectable to ground (FIXED: Reduced bounding radius)
     Selectable groundSel;
@@ -548,7 +585,7 @@ void init(void) {
         t.roll = 0.0f;
         
         ecs.AddTransform(treeId, t);
-        ecs.AddRenderable(treeId, meshTree, renderer);
+        ecs.AddRenderable(treeId, meshTreeId, renderer);
         
         // Add Selectable to trees
         Selectable treeSel;
@@ -583,7 +620,7 @@ void init(void) {
         anim.currentClip = -1;
         anim.time = 0.0f;
         ecs.AddAnimator(eid, anim);
-        ecs.AddRenderable(eid, meshEnemy, renderer);
+        ecs.AddRenderable(eid, meshEnemyId, renderer);
         
         // Add Selectable to enemies
         Selectable enemySel;
@@ -815,8 +852,22 @@ void frame(void) {
     const auto& lights = ecs.GetLights();
     const auto& transforms = ecs.GetTransforms();
 
+    // TEMPORARY DEBUG - Remove after testing
+    static int frameCount = 0;
+    if (frameCount++ % 60 == 0) { // Print once per second (at 60fps)
+        printf("\n=== LIGHT DEBUG (Frame %d) ===\n", frameCount);
+        printf("Total light entities: %zu\n", lights.size());
+        printf("Total transform entities: %zu\n", transforms.size());
+    }
+
+    int activeLightCount = 0;
     for (const auto& [entityId, light] : lights) {
-        if (!light.enabled) continue;
+        if (!light.enabled) {
+            if (frameCount % 60 == 0) {
+                printf("  Light %d: DISABLED\n", entityId);
+            }
+            continue;
+        }
         
         auto transIt = transforms.find(entityId);
         if (transIt != transforms.end()) {
@@ -824,7 +875,29 @@ void frame(void) {
             lightColors.push_back(light.color);
             lightIntensities.push_back(light.intensity);
             lightRadii.push_back(light.radius);
+            activeLightCount++;
+            
+            if (frameCount % 60 == 0) {
+                printf("  Light %d: pos=(%.1f,%.1f,%.1f) color=(%.2f,%.2f,%.2f) intensity=%.1f radius=%.1f\n",
+                       entityId,
+                       transIt->second.position.X, transIt->second.position.Y, transIt->second.position.Z,
+                       light.color.X, light.color.Y, light.color.Z,
+                       light.intensity, light.radius);
+            }
+        } else {
+            if (frameCount % 60 == 0) {
+                printf("  Light %d: ERROR - No transform found!\n", entityId);
+            }
         }
+    }
+
+    if (frameCount % 60 == 0) {
+        printf("Active lights passed to renderer: %d\n", activeLightCount);
+        if (player) {
+            hmm_vec3 camPos = player->CameraPosition();
+            printf("Camera position: (%.1f, %.1f, %.1f)\n", camPos.X, camPos.Y, camPos.Z);
+        }
+        printf("=== END LIGHT DEBUG ===\n\n");
     }
 
     renderer.SetLights(lightPositions, lightColors, lightIntensities, lightRadii);
@@ -980,6 +1053,222 @@ static void input(const sapp_event* ev) {
         }
     }
     
+    // Handle placement mode (EDIT MODE)
+    if (gameState.IsEdit() && placementMode) {
+        if (ev->type == SAPP_EVENTTYPE_KEY_DOWN && ev->key_code == SAPP_KEYCODE_ESCAPE) {
+            placementMode = false;
+            if (ghostEntity != -1) {
+                ecs.DestroyEntity(ghostEntity);
+                ghostEntity = -1;
+            }
+            return;
+        }
+        
+        if (ev->type == SAPP_EVENTTYPE_MOUSE_DOWN && ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
+            if (!ui.IsGuiVisible() || !ImGui::GetIO().WantCaptureMouse) {
+                // Place entity at cursor position
+                if (player) {
+                    hmm_mat4 proj = HMM_Perspective(60.0f, (float)sapp_width() / (float)sapp_height(), 0.01f, 1000.0f);
+                    hmm_mat4 view = player->GetViewMatrix();
+                    
+                    hmm_vec3 rayOrigin = player->CameraPosition();
+                    hmm_vec3 rayDir = ScreenToWorldRay(ev->mouse_x, ev->mouse_y, sapp_width(), sapp_height(), view, proj);
+                    
+                    hmm_vec3 position = ecs.GetPlacementPosition(rayOrigin, rayDir, 10.0f);
+                    
+                    // Create entity
+                    EntityId newEntity = ecs.CreateEntity();
+                    Transform t;
+                    t.position = position;
+                    
+                    // Configure entity based on placement type
+                    if (placementMeshId == meshTreeId) {  // COMPARE TO meshTreeId, not 0!
+                        // TREE
+                        t.yaw = 0.0f;
+                        t.pitch = 90.0f; // Stand tree upright
+                        t.roll = 0.0f;
+                        ecs.AddTransform(newEntity, t);
+                        
+                        // Verify transform was added
+                        if (!ecs.HasTransform(newEntity)) {
+                            printf("ERROR: Failed to add transform to entity %d\n", newEntity);
+                        }
+                        
+                        int instanceId = ecs.AddRenderable(newEntity, meshTreeId, renderer);
+                        printf("  Tree meshId=%d, instance ID: %d\n", meshTreeId, instanceId);
+                        
+                        if (instanceId < 0) {
+                            printf("ERROR: Failed to create renderer instance for tree entity %d!\n", newEntity);
+                            printf("  Check renderer capacity\n");
+                        }
+                        
+                        // Add selectable
+                        Selectable treeSel;
+                        treeSel.name = "Tree";
+                        treeSel.boundingRadius = 3.0f;
+                        ecs.AddSelectable(newEntity, treeSel);
+                        
+                        // Add collider
+                        Collider col;
+                        col.type = ColliderType::Sphere;
+                        col.radius = 3.0f;
+                        col.isStatic = true;
+                        ecs.AddCollider(newEntity, col);
+                        
+                        // Add to tracking vector
+                        treeEntities.push_back(newEntity);
+                        
+                        // Create wireframe immediately (only if renderable succeeded)
+                        if (instanceId >= 0) {
+                            CreateOrUpdateWireframe(newEntity, false);
+                        }
+                        
+                        printf("Placed TREE at (%.2f, %.2f, %.2f) with entity ID %d\n", position.X, position.Y, position.Z, newEntity);
+                        
+                    } else if (placementMeshId == meshEnemyId) {  // COMPARE TO meshEnemyId, not 1!
+                        // ENEMY
+                        t.yaw = 0.0f;
+                        t.pitch = 0.0f;
+                        t.roll = 0.0f;
+                        ecs.AddTransform(newEntity, t);
+                        
+                        int instanceId = ecs.AddRenderable(newEntity, meshEnemyId, renderer);
+                        printf("  Enemy meshId=%d, instance ID: %d\n", meshEnemyId, instanceId);
+                        
+                        if (instanceId < 0) {
+                            printf("ERROR: Failed to create renderer instance for enemy entity %d!\n", newEntity);
+                        }
+                        
+                        // Add AI and animator
+                        AIController ai;
+                        ai.state = AIState::Wander;
+                        ai.stateTimer = 3.0f + ((float)rand() / RAND_MAX) * 4.0f;
+                        ai.wanderTarget = HMM_AddVec3(t.position, HMM_Vec3(((float)rand()/RAND_MAX - 0.5f)*10.0f, 0.0f, ((float)rand()/RAND_MAX - 0.5f)*10.0f));
+                        ecs.AddAI(newEntity, ai);
+                        
+                        Animator anim;
+                        anim.currentClip = -1;
+                        anim.time = 0.0f;
+                        ecs.AddAnimator(newEntity, anim);
+                        
+                        // Add selectable
+                        Selectable enemySel;
+                        enemySel.name = "Enemy";
+                        enemySel.boundingRadius = 1.5f;
+                        ecs.AddSelectable(newEntity, enemySel);
+                        
+                        // Add collider
+                        Collider col;
+                        col.type = ColliderType::Sphere;
+                        col.radius = 1.5f;
+                        ecs.AddCollider(newEntity, col);
+                        
+                        // Add to tracking vector
+                        enemyEntities.push_back(newEntity);
+                        
+                        // Create wireframe immediately (only if renderable succeeded)
+                        if (instanceId >= 0) {
+                            CreateOrUpdateWireframe(newEntity, false);
+                        }
+                        
+                        printf("Placed ENEMY at (%.2f, %.2f, %.2f) with entity ID %d\n", position.X, position.Y, position.Z, newEntity);
+                        
+                    } else if (placementMeshId == -1) {
+                        // LIGHT (no mesh)
+                        printf("DEBUG: Placing light (placementMeshId=-1)\n");
+                        
+                        t.yaw = 0.0f;
+                        
+                        // IMPROVED: Always place lights at a reasonable height (3 units above ground)
+                        position.Y = position.Y + 3.0f; // Raise light 3 units above placement point
+                        t.position = position;
+                        
+                        ecs.AddTransform(newEntity, t);
+                        
+                        Light light;
+                        light.color = HMM_Vec3(1.0f, 0.8f, 0.6f); // Warm white
+                        light.intensity = 10.0f;
+                        light.radius = 30.0f;
+                        light.enabled = true;
+                        ecs.AddLight(newEntity, light);
+                        
+                        // Add selectable
+                        Selectable lightSel;
+                        lightSel.name = "Point Light";
+                        lightSel.boundingRadius = 2.0f;
+                        ecs.AddSelectable(newEntity, lightSel);
+                        
+                        // Add to tracking vector
+                        lightEntities.push_back(newEntity);
+                        
+                        // Create wireframe immediately
+                        CreateOrUpdateWireframe(newEntity, false);
+                        
+                        printf("Placed LIGHT at (%.2f, %.2f, %.2f) with entity ID %d\n", position.X, position.Y, position.Z, newEntity);
+                    } else {
+                        // Unknown placement type
+                        printf("ERROR: Unknown placementMeshId=%d (expected %d for tree, %d for enemy, -1 for light)\n", 
+                               placementMeshId, meshTreeId, meshEnemyId);
+                    }
+                    
+                    // Sync the new entity to the renderer immediately
+                    ecs.SyncToRenderer(renderer);
+                }
+            }
+        }
+    }
+
+    // Handle 'P' key to toggle placement mode
+    if (ev->type == SAPP_EVENTTYPE_KEY_DOWN && ev->key_code == SAPP_KEYCODE_P && gameState.IsEdit()) {
+        placementMode = !placementMode;
+        printf("Placement mode: %s\n", placementMode ? "ON" : "OFF");
+        return;
+    }
+
+    // Handle Delete key to delete selected entity
+    if (ev->type == SAPP_EVENTTYPE_KEY_DOWN && ev->key_code == SAPP_KEYCODE_DELETE && gameState.IsEdit()) {
+        if (selectedEntity != -1) {
+            printf("Deleting entity %d\n", selectedEntity);
+            
+            // CRITICAL: Remove wireframe FIRST before destroying the entity
+            auto wireIt = entityWireframes.find(selectedEntity);
+            if (wireIt != entityWireframes.end()) {
+                EntityId wireframeEntity = wireIt->second;
+                printf("  Also removing wireframe entity %d\n", wireframeEntity);
+                ecs.RemoveRenderable(wireframeEntity, renderer);
+                ecs.DestroyEntity(wireframeEntity);
+                entityWireframes.erase(wireIt);
+            }
+            
+            // Now destroy the actual entity
+            ecs.RemoveRenderable(selectedEntity, renderer);
+            ecs.DestroyEntity(selectedEntity);
+            
+            // Remove from tracking vectors
+            auto treeIt = std::find(treeEntities.begin(), treeEntities.end(), selectedEntity);
+            if (treeIt != treeEntities.end()) {
+                treeEntities.erase(treeIt);
+                printf("  Removed from treeEntities\n");
+            }
+            
+            auto enemyIt = std::find(enemyEntities.begin(), enemyEntities.end(), selectedEntity);
+            if (enemyIt != enemyEntities.end()) {
+                enemyEntities.erase(enemyIt);
+                printf("  Removed from enemyEntities\n");
+            }
+            
+            auto lightIt = std::find(lightEntities.begin(), lightEntities.end(), selectedEntity);
+            if (lightIt != lightEntities.end()) {
+                lightEntities.erase(lightIt);
+                printf("  Removed from lightEntities\n");
+            }
+            
+            selectedEntity = -1;
+            printf("Entity deletion complete\n");
+        }
+        return;
+    }
+    
     // forward events to UI manager
     ui.HandleEvent(ev);
     
@@ -991,6 +1280,8 @@ static void input(const sapp_event* ev) {
         }
     }
 }
+
+
 
 sapp_desc sokol_main(int argc, char* argv[]) {
     (void)argc; (void)argv;

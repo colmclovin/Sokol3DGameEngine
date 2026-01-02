@@ -474,23 +474,19 @@ void Renderer::Cleanup() {
     screenSpaceInstances_.clear();
 }
 
-void Renderer::SetLights(const std::vector<hmm_vec3>& positions,
-                         const std::vector<hmm_vec3>& colors,
-                         const std::vector<float>& intensities,
-                         const std::vector<float>& radii) {
+void Renderer::SetLights(const std::vector<hmm_vec3> &positions,
+        const std::vector<hmm_vec3> &colors,
+        const std::vector<float> &intensities,
+        const std::vector<float> &radii) {
     int count = (int)positions.size();
-    if (count > 8) count = 8; // MAX_LIGHTS
-    
+    if (count > 512) count = 512; // CHANGED: Match shader array size
+
     // Pack light data into vec4 arrays
     for (int i = 0; i < count; i++) {
-        // light_data[i] = vec4(position.xyz, intensity)
         fs_params_.light_data[i] = HMM_Vec4(positions[i].X, positions[i].Y, positions[i].Z, intensities[i]);
-        
-        // light_colors[i] = vec4(color.rgb, radius)
         fs_params_.light_colors[i] = HMM_Vec4(colors[i].X, colors[i].Y, colors[i].Z, radii[i]);
     }
-    
-    // sun_color_misc.w = light_count (changed from misc.w)
+
     fs_params_.sun_color_misc.W = (float)count;
 }
 

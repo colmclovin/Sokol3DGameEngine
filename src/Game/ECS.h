@@ -13,6 +13,15 @@
 
 using EntityId = int;
 
+// Collision info structure
+struct CollisionInfo {
+    EntityId entityA;
+    EntityId entityB;
+    hmm_vec3 normal;      // Collision normal (from A to B)
+    float penetration;    // How deep the collision is
+    hmm_vec3 contactPoint; // Point of contact
+};
+
 class ECS {
 public:
     ECS();
@@ -29,6 +38,10 @@ public:
 
     void AddRigidbody(EntityId id, const Rigidbody& rb);
     Rigidbody* GetRigidbody(EntityId id);
+    
+    void AddCollider(EntityId id, const Collider& col);
+    Collider* GetCollider(EntityId id);
+    bool HasCollider(EntityId id) const;
 
     void AddAI(EntityId id, const AIController& ai);
     AIController* GetAI(EntityId id);
@@ -67,9 +80,16 @@ public:
     void UpdateAnimation(float dt);
     void UpdateBillboards(const hmm_vec3& cameraPosition);
     void UpdateScreenSpace(float screenWidth, float screenHeight);
+    
+    // Collision detection
+    void UpdateCollisions(float dt);
+    bool CheckCollision(EntityId a, EntityId b, CollisionInfo* outInfo = nullptr);
 
     // Selection system
     EntityId RaycastSelection(const hmm_vec3& rayOrigin, const hmm_vec3& rayDir, float maxDistance = 1000.0f);
+    
+    // Placement system for edit mode
+    hmm_vec3 GetPlacementPosition(const hmm_vec3& rayOrigin, const hmm_vec3& rayDir, float distance = 10.0f);
 
     // Sync transforms to renderer (call after systems)
     void SyncToRenderer(Renderer& renderer);
@@ -83,6 +103,7 @@ public:
     const std::unordered_map<EntityId, Light>& GetLights() const { return lights_; }
     const std::unordered_map<EntityId, Transform>& GetTransforms() const { return transforms_; }
     const std::unordered_map<EntityId, Selectable>& GetSelectables() const { return selectables_; }
+    const std::unordered_map<EntityId, Collider>& GetColliders() const { return colliders_; }
 
 private:
     EntityId nextId_ = 1;
@@ -90,6 +111,7 @@ private:
 
     std::unordered_map<EntityId, Transform> transforms_;
     std::unordered_map<EntityId, Rigidbody> rigidbodies_;
+    std::unordered_map<EntityId, Collider> colliders_;
     std::unordered_map<EntityId, AIController> ai_controllers_;
     std::unordered_map<EntityId, Animator> animators_;
     std::unordered_map<EntityId, Billboard> billboards_;
@@ -100,4 +122,9 @@ private:
     // rendering maps
     std::unordered_map<EntityId, int> mesh_for_entity_;
     std::unordered_map<EntityId, int> instance_for_entity_;
+    
+    // Collision helpers
+    bool SphereVsSphere(const hmm_vec3& posA, float radiusA, const hmm_vec3& posB, float radiusB, CollisionInfo* outInfo);
+    bool SphereVsBox(const hmm_vec3& spherePos, float radius, const hmm_vec3& boxPos, const hmm_vec3& boxHalfExtents, CollisionInfo* outInfo);
+    void ResolveCollision(EntityId a, EntityId b, const CollisionInfo& info);
 };
