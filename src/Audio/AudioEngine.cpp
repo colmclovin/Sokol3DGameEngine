@@ -22,6 +22,7 @@ AudioEngine::AudioEngine() noexcept
     , m_playing(false)
     , m_volume(1.0f)
     , m_has_buffer(false)
+    , m_saudio_setup(false)
 {
     memset(&m_wav, 0, sizeof(m_wav));
 }
@@ -36,6 +37,8 @@ bool AudioEngine::Init() {
     ad.sample_rate = 44100;
     ad.num_channels = 2;
     saudio_setup(&ad);
+    // mark that saudio was set up (so Shutdown can be safe/ idempotent)
+    m_saudio_setup = true;
     return true;
 }
 
@@ -97,7 +100,11 @@ float AudioEngine::GetVolume() const {
 }
 
 void AudioEngine::Shutdown() {
-    saudio_shutdown();
+    // only shutdown sokol-audio if it was previously setup
+    if (m_saudio_setup.load()) {
+        saudio_shutdown();
+        m_saudio_setup = false;
+    }
     if (m_audio_buffer) {
         free(m_audio_buffer);
         m_audio_buffer = nullptr;

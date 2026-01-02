@@ -42,4 +42,5 @@ private:
     std::atomic<bool> m_playing;
     std::atomic<float> m_volume;
     bool m_has_buffer;
+    std::atomic<bool> m_saudio_setup; // true after saudio_setup() succeeded
 };

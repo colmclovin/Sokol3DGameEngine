@@ -17,7 +17,7 @@ include_directories(
 add_library(Sokol STATIC ../External/Sokol/sokol.c ../External/Sokol/sokol_gfx.h ../External/Sokol/sokol_app.h)
 set_target_properties(Sokol PROPERTIES LINKER_LANGUAGE C)
 
-# ImGui
+# ImGuis
 add_library(imgui STATIC
     ../External/Imgui/imgui.cpp
     ../External/Imgui/imgui_draw.cpp
@@ -31,10 +31,14 @@ target_include_directories(imgui PUBLIC ../External/Imgui)
 add_executable(Game WIN32
     Main.cpp
     src/Renderer/Renderer.cpp
+    src/Game/ECS.cpp
+    src/Game/Player.cpp
+    src/ThirdParty/SokolLog.cpp
     src/Audio/AudioEngine.cpp
     src/Model/ModelLoader.cpp
     src/UI/UIManager.cpp
     src/ThirdParty/HandmadeMathImpl.cpp
+    src/ThirdParty/StbImageImpl.cpp
 )
 
 target_include_directories(Game PRIVATE

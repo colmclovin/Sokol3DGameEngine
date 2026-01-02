@@ -10,19 +10,28 @@
 #include "../../External/dbgui.h"
 #include "../../External/sokol_debugtext.h"         // implementation included because SOKOL_DEBUGTEXT_IMPL defined
 
+// forward declare our project logger (defined in src/ThirdParty/SokolLog.cpp)
+extern "C" void slog_to_debug(const char* tag,
+                              uint32_t log_level,
+                              uint32_t log_item_id,
+                              const char* message_or_null,
+                              uint32_t line_nr,
+                              const char* filename_or_null,
+                              void* user_data);
+
 #include "UIManager.h"
 #include <string.h>
 
 bool UIManager::Setup() {
     sdtx_desc_t sdtx_desc = {};
     sdtx_desc.fonts[0] = sdtx_font_oric();
-    sdtx_desc.logger.func = slog_func;
+    sdtx_desc.logger.func = slog_to_debug;
     sdtx_setup(&sdtx_desc);
 
     __dbgui_setup(sapp_sample_count());
 
     simgui_desc_t simgui_desc = {};
-    simgui_desc.logger.func = slog_func;
+    simgui_desc.logger.func = slog_to_debug;
     simgui_setup(&simgui_desc);
 
     return true;

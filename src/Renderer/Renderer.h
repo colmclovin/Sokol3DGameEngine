@@ -12,7 +12,7 @@ public:
     Renderer() noexcept;
     ~Renderer() noexcept;
 
-    bool Init(); // create buffers + pipeline
+    bool Init();
     void Cleanup();
 
     // Mesh management
@@ -24,13 +24,11 @@ public:
     void UpdateInstanceTransform(int instanceId, const hmm_mat4& transform);
     void RemoveInstance(int instanceId);
 
-    // Call on resize
     void OnResize();
 
-    // Render API:
-    // BeginPass / Render / EndPass allow UI (simgui, sdtx) to be called inside same pass.
+    // Render API
     void BeginPass();
-    void Render(const hmm_mat4& mvp); // issue mesh draw calls - must be called after BeginPass()
+    void Render(const hmm_mat4& mvp);
     void EndPass();
 
 private:
@@ -42,33 +40,38 @@ private:
         int index_count;
     };
 
-    void create_render_targets();
-    void rebuild_gpu_buffers(); // re-uploads merged CPU arrays to GPU buffers
+    struct InstanceBufferInfo {
+        sg_buffer buffer;
+        size_t capacity;  // in number of instances
+    };
 
-    // sokol resources
+    void create_render_targets();
+    void rebuild_gpu_buffers();
+
+    // Sokol resources
     sg_buffer vbuf_;
     sg_buffer ibuf_;
+    sg_buffer inst_vbuf_;
+    std::unordered_map<int, InstanceBufferInfo> mesh_instance_bufs_;
     sg_pipeline pip_;
     sg_bindings bind_;
     sg_pass_action pass_action_;
     sg_pass pass_desc_;
 
-    // merged CPU-side storage
+    // CPU-side storage
     std::vector<Vertex> merged_vertices_;
     std::vector<uint16_t> merged_indices_;
 
-    // bookkeeping
+    // Cached per-frame data (reused to avoid allocations)
+    std::unordered_map<int, std::vector<hmm_mat4>> mesh_instances_cache_;
+
+    // Bookkeeping
     std::unordered_map<int, MeshMeta> meshes_;
     std::vector<ModelInstance> instances_;
     int next_mesh_id_;
     int next_instance_id_;
 
-    vs_params_t vs_params_; // from Shader.h
+    vs_params_t vs_params_;
 
-    // Simple resource maps (skeleton)
-    std::unordered_map<int, sg_image> textures_;
-    std::unordered_map<int, int> materials_; // placeholder
-
-    // pipeline state dirty
     bool gpu_buffers_dirty_;
 };
