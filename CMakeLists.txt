@@ -4,78 +4,71 @@ project(Game)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 23)
 
-# === Assimp: Use Release DLL + .lib ===
-# Assimp headers
-include_directories(
-    ${CMAKE_SOURCE_DIR}/../External/Assimp/include         # for Assimp source headers
-    ${CMAKE_SOURCE_DIR}/../External/Assimp/build/include   # for generated config.h
-)
-link_directories(${CMAKE_SOURCE_DIR}/../External/Assimp/build/lib/Release)
+# Assimp layout root
+set(ASSIMP_ROOT "${CMAKE_SOURCE_DIR}/../External/Assimp")
 
-# === LIBRARY: Sokol ===
-set(SOKOL_HEADERS
-    ../External/Sokol/sokol_gfx.h
-    ../External/Sokol/sokol_app.h
-    ../External/Sokol/sokol_log.h
-    ../External/Sokol/sokol_time.h
-    ../External/Sokol/sokol_glue.h
-    ../External/Sokol/sokol_audio.h
+# Include dirs (global fall-back)
+include_directories(
+    ${ASSIMP_ROOT}/include
+    ${ASSIMP_ROOT}/build/include
 )
-add_library(Sokol STATIC ../External/Sokol/sokol.c ${SOKOL_HEADERS})
+
+# Sokol library
+add_library(Sokol STATIC ../External/Sokol/sokol.c ../External/Sokol/sokol_gfx.h ../External/Sokol/sokol_app.h)
 set_target_properties(Sokol PROPERTIES LINKER_LANGUAGE C)
 
-if (MSVC)
-    target_compile_options(Sokol PRIVATE
-        $<$<CONFIG:Debug>:/MTd>
-        $<$<CONFIG:Release>:/MT>
-    )
-endif()
-
-# === LIBRARY: Dear ImGui ===
-set(IMGUI_SRC
+# ImGui
+add_library(imgui STATIC
     ../External/Imgui/imgui.cpp
     ../External/Imgui/imgui_draw.cpp
     ../External/Imgui/imgui_widgets.cpp
     ../External/Imgui/imgui_tables.cpp
     ../External/Imgui/imgui_demo.cpp
 )
-add_library(imgui STATIC ${IMGUI_SRC})
 target_include_directories(imgui PUBLIC ../External/Imgui)
 
-if (MSVC)
-    target_compile_options(imgui PRIVATE
-        $<$<CONFIG:Debug>:/MTd>
-        $<$<CONFIG:Release>:/MT>
-    )
+# Executable and sources
+add_executable(Game WIN32
+    Main.cpp
+    src/Renderer/Renderer.cpp
+    src/Audio/AudioEngine.cpp
+    src/Model/ModelLoader.cpp
+    src/UI/UIManager.cpp
+    src/ThirdParty/HandmadeMathImpl.cpp
+)
+
+target_include_directories(Game PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/include
+    ${ASSIMP_ROOT}/include
+    ${ASSIMP_ROOT}/build/include
+    ${CMAKE_SOURCE_DIR}/../External/Imgui
+    ${CMAKE_SOURCE_DIR}/../External/Sokol
+)
+
+# Force using Assimp Release build artifacts (useful when Debug build of Game should still link Release Assimp)
+set(ASSIMP_LIB_PATH "${ASSIMP_ROOT}/build/lib/Release/assimp-vc143-mt.lib")
+set(ASSIMP_DLL_PATH "${ASSIMP_ROOT}/build/bin/Release/assimp-vc143-mt.dll")
+
+if (NOT EXISTS "${ASSIMP_LIB_PATH}")
+    message(FATAL_ERROR "Assimp library not found at ${ASSIMP_LIB_PATH}. Build Assimp Release or update ASSIMP_ROOT.")
+endif()
+if (NOT EXISTS "${ASSIMP_DLL_PATH}")
+    message(WARNING "Assimp DLL not found at ${ASSIMP_DLL_PATH}. The executable may fail at runtime if the DLL is missing.")
 endif()
 
-if (MSVC)
-    #set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MT")
-endif()
+target_link_libraries(Game PRIVATE Sokol imgui "${ASSIMP_LIB_PATH}")
 
-# === EXECUTABLE ===
-add_executable(Game WIN32 Main.cpp)
-set_target_properties(Game PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
-
-# === Copy assets ===
+# Copy assets
 add_custom_command(TARGET Game POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
     "${CMAKE_CURRENT_SOURCE_DIR}/assets"
     "$<TARGET_FILE_DIR:Game>/assets"
 )
 
-# === Always copy Release DLL ===
+# Copy the Release Assimp DLL next to the executable
 add_custom_command(TARGET Game POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${CMAKE_SOURCE_DIR}/../External/Assimp/build/bin/Release/assimp-vc143-mt.dll"
+    "${ASSIMP_DLL_PATH}"
     "$<TARGET_FILE_DIR:Game>"
 )
-
-# === Link All Required Libraries ===
-target_link_libraries(Game PRIVATE Sokol imgui assimp-vc143-mt.lib)
-
-# === System libs (Linux only) ===
-if (UNIX AND NOT APPLE)
-    target_link_libraries(Game m dl pthread X11 Xi Xcursor GL)
-endif()
