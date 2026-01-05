@@ -35,6 +35,25 @@ public:
     
     // Enable/disable input processing (used when GUI is open)
     void SetInputEnabled(bool enabled) { inputEnabled_ = enabled; }
+    
+    // ADDED: Debug getters for ImGui inspector
+    float GetMoveSpeed() const { return moveSpeed_; }
+    void SetMoveSpeed(float speed) { moveSpeed_ = speed; }
+    
+    float GetJumpForce() const { return jumpForce_; }
+    void SetJumpForce(float force) { jumpForce_ = force; }
+    
+    bool IsGrounded() const { return isGrounded_; }
+    
+    hmm_vec3 GetVelocity() const {
+        Rigidbody* rb = ecs_.GetRigidbody(entityId_);
+        return rb ? rb->velocity : HMM_Vec3(0, 0, 0);
+    }
+    
+    float GetCurrentSpeed() const {
+        hmm_vec3 vel = GetVelocity();
+        return sqrtf(vel.X * vel.X + vel.Z * vel.Z); // Horizontal speed only
+    }
 
 private:
     ECS& ecs_;

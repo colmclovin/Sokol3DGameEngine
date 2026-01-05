@@ -137,6 +137,7 @@ public:
     const std::unordered_map<EntityId, Transform>& GetTransforms() const { return transforms_; }
     const std::unordered_map<EntityId, Selectable>& GetSelectables() const { return selectables_; }
     const std::unordered_map<EntityId, Collider>& GetColliders() const { return colliders_; }
+    const std::unordered_map<EntityId, Rigidbody>& GetRigidbodies() const { return rigidbodies_; } // ADDED
 
 private:
     EntityId nextId_ = 1;
@@ -158,7 +159,7 @@ private:
     // Collision helpers
     bool SphereVsSphere(const hmm_vec3& posA, float radiusA, const hmm_vec3& posB, float radiusB, CollisionInfo* outInfo);
     bool SphereVsBox(const hmm_vec3& spherePos, float radius, const hmm_vec3& boxPos, const hmm_vec3& boxHalfExtents, CollisionInfo* outInfo);
-    bool SphereVsPlane(const hmm_vec3& spherePos, float radius, const hmm_vec3& planeNormal, float planeDistance, CollisionInfo* outInfo);  // ADDED
+    bool SphereVsPlane(const hmm_vec3& spherePos, float radius, const hmm_vec3& planeNormal, float planeDistance, CollisionInfo* outInfo);
     void ResolveCollision(EntityId a, EntityId b, const CollisionInfo& info);
     
     // NEW: Ray-triangle intersection

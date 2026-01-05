@@ -1,4 +1,5 @@
 ﻿// TODO: AI for enemies
+// TODO: Animations
 // TODO: serialization system
 // TODO: Level system?
 // TODO: saving offsets, variables, controls to file, read and write them, etc.
@@ -160,7 +161,11 @@ void init(void) {
     ui.AddGuiCallback([]() {
         editorUI.RenderAudioControls();
         editorUI.RenderGameStateControls();
-
+        
+        // ADDED: Global performance stats (always visible)
+        ImGui::Separator();
+        editorUI.RenderPerformanceStats((float)sapp_frame_duration());
+        
         if (gameState.IsEdit()) {
             ImGui::Separator();
             
@@ -214,6 +219,8 @@ void init(void) {
     player = new PlayerController(ecs, renderer, meshPlayerId, gameState);
     player->Spawn(HMM_Vec3(0.0f, 2.0f, 0.0f)); // CHANGED: Spawn above ground, will fall with gravity
 
+    // ADDED: Set player reference in EditorUI
+    editorUI.SetPlayer(player);
     // Create ground
     printf("\n=== CREATING GROUND ===\n");
     groundEntity = ecs.CreateEntity();
@@ -817,4 +824,35 @@ sapp_desc sokol_main(int argc, char *argv[]) {
     desc.logger.func = slog_to_debug;
     desc.fullscreen = false;
     return desc;
+    // Remove the duplicate - keep only ONE of these:
+    // Register ImGui callback
+    ui.AddGuiCallback([]() {
+        editorUI.RenderAudioControls();
+        editorUI.RenderGameStateControls();
+        
+        // ADDED: Global performance stats (always visible)
+        ImGui::Separator();
+        editorUI.RenderPerformanceStats((float)sapp_frame_duration());
+
+        if (gameState.IsEdit()) {
+            ImGui::Separator();
+            
+            // ADDED: Collision visualization toggle
+            if (ImGui::CollapsingHeader("Visualization", ImGuiTreeNodeFlags_DefaultOpen)) {
+                editorUI.RenderCollisionVisualization(showCollisionShapes);
+            }
+            
+            ImGui::Separator();
+            if (ImGui::CollapsingHeader("Entity Inspector", ImGuiTreeNodeFlags_DefaultOpen)) {
+                editorUI.RenderEntityInspector(selectedEntity);
+            }
+
+            editorUI.RenderPlacementControls(placementMode, placementMeshId, meshTreeId, meshEnemyId);
+        }
+
+        if (player) {
+            ImGui::Separator();
+            player->GetCamera().RenderImGuiControls();
+        }
+    });
 }
