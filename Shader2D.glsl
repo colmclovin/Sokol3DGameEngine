@@ -4,8 +4,12 @@
 layout(binding=0) uniform vs_params {
     mat4 mvp;
     mat4 model; 
-    float is_screen_space; // 1.0 for screen-space HUD, 0.0 for world-space
+    float is_screen_space;
+    // ADDED: Bone matrices for skeletal animation (max 128 bones)
+    mat4 bone_transforms[128];
+    float has_bones;  // 1.0 if this mesh has bones, 0.0 otherwise
 };
+
 
 in vec3 pos;
 in vec3 normal_in;

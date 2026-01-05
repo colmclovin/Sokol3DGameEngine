@@ -200,7 +200,7 @@ void init(void) {
     models3D[0] = loader.LoadModel("assets/models/cartoon_lowpoly_trees_blend.glb");
     models3D[1] = loader.LoadModel("assets/models/cube.glb");
     models3D[2] = loader.LoadModel("assets/models/test1.glb");
-    models3D[3] = QuadGeometry::CreateGroundQuad(200.0f, 10.0f);
+    models3D[3] = QuadGeometry::CreateGroundQuad(2000.f, 10.0f);
 
     printf("\n=== ADDING MESHES TO RENDERER ===\n");
     meshTreeId = renderer.AddMesh(models3D[0]);

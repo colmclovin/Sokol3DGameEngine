@@ -7,19 +7,12 @@ layout(binding=0) uniform vs_params {
     mat4 mvp;
     mat4 model; 
     float is_screen_space;
-    // ADDED: Bone matrices for skeletal animation (max 128 bones)
-    mat4 bone_transforms[128];
-    float has_bones;  // 1.0 if this mesh has bones, 0.0 otherwise
 };
 
 in vec3 pos;
 in vec3 normal_in;
 in vec2 uv_in;
 in vec4 color_in;
-
-// ADDED: Bone skinning data (4 bones per vertex max)
-in ivec4 bone_ids;
-in vec4 bone_weights;
 
 in vec4 inst_row0;
 in vec4 inst_row1;
@@ -33,33 +26,13 @@ out vec4 vertex_color;
 
 void main() {
     mat4 inst_transform = mat4(inst_row0, inst_row1, inst_row2, inst_row3);
-    
-    vec4 local_pos = vec4(pos, 1.0);
-    vec3 local_normal = normal_in;
-    
-    // ADDED: Apply bone skinning if this mesh has bones
-    if (has_bones > 0.5) {
-        // Compute skinned position
-        mat4 bone_transform = bone_transforms[bone_ids[0]] * bone_weights[0];
-        bone_transform += bone_transforms[bone_ids[1]] * bone_weights[1];
-        bone_transform += bone_transforms[bone_ids[2]] * bone_weights[2];
-        bone_transform += bone_transforms[bone_ids[3]] * bone_weights[3];
-        
-        local_pos = bone_transform * vec4(pos, 1.0);
-        
-        // Transform normal by bone matrix (3x3 part only)
-        mat3 bone_normal_matrix = mat3(bone_transform);
-        local_normal = bone_normal_matrix * normal_in;
-    }
-    
-    // Transform to world space
-    vec4 world_position = inst_transform * local_pos;
+    vec4 world_position = inst_transform * vec4(pos, 1.0);
     
     gl_Position = mvp * world_position;
     world_pos = world_position.xyz;
     
     mat3 normal_matrix = mat3(inst_transform);
-    world_normal = normalize(normal_matrix * local_normal);
+    world_normal = normalize(normal_matrix * normal_in);
     
     uv = uv_in;
     vertex_color = color_in;
@@ -67,12 +40,17 @@ void main() {
 @end
 
 @fs Shader3DLit_fs
+// REMOVED: No more MAX_LIGHTS limit
+// The actual limit is now determined by the C++ code and GPU capabilities
+
 layout(binding=1) uniform fs_params {
+    // Light data packed into vec4 arrays
+    // INCREASED: Support up to 512 lights (practical limit: ~1000 before hitting 64KB uniform buffer limit)
     vec4 light_data[512];
     vec4 light_colors[512];
     vec4 ambient_data;
     vec4 sun_data;
-    vec4 sun_color_misc;
+    vec4 sun_color_misc; // sun_color_misc.w = actual light count (0-512)
 };
 
 in vec2 uv;
@@ -99,6 +77,7 @@ void main() {
         lighting += sun_color * sun_intensity * sun_diff;
     }
     
+    // CHANGED: Loop through actual light count (no hardcoded MAX_LIGHTS check)
     int light_count = int(sun_color_misc.w);
     
     for (int i = 0; i < light_count; i++) {

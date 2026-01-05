@@ -6,7 +6,7 @@
 
 // Include the actual shader headers here (in the .cpp file only)
 // The vs_params_t conflict is suppressed because ShaderCommon.h defined it first
-#include "Shader3D.h"
+//#include "Shader3D.h"
 #include "Shader2D.h"
 #include "Shader3DLit.h"
 
@@ -103,35 +103,45 @@ bool Renderer::Init() {
     inst_vbuf_ = sg_make_buffer(&inst_desc);
     bind_.vertex_buffers[1] = inst_vbuf_;
 
-    // Create 3D shader for models (vertex colors + lighting)
-    sg_shader shader_3d = sg_make_shader(Shader3D_shader_desc(sg_query_backend()));
+    // CHANGED: Use Shader3DLit instead of Shader3D
+    sg_shader shader_3d_lit = sg_make_shader(Shader3DLit_shader_desc(sg_query_backend()));
 
     // Create 2D shader for textured quads
     sg_shader shader_2d = sg_make_shader(Shader2D_shader_desc(sg_query_backend()));
 
     // Setup common pipeline desc
     sg_pipeline_desc pip_desc = {};
-    pip_desc.shader = shader_3d;  // Start with 3D shader
+    pip_desc.shader = shader_3d_lit;  // Use lit shader
     
-    // Configure buffer[0] stride for per-vertex data
-    pip_desc.layout.buffers[0].stride = sizeof(Vertex); // 48 bytes
+    // FIXED: Configure buffer[0] stride for per-vertex data (NOW 96 BYTES)
+    pip_desc.layout.buffers[0].stride = sizeof(Vertex); // 96 bytes (was 48)
     
-    // Per-vertex attributes (buffer 0)
-    pip_desc.layout.attrs[ATTR_Shader3D_pos].buffer_index = 0;
-    pip_desc.layout.attrs[ATTR_Shader3D_pos].format = SG_VERTEXFORMAT_FLOAT3;
-    pip_desc.layout.attrs[ATTR_Shader3D_pos].offset = 0;
+    // Per-vertex attributes (buffer 0) - POSITIONS 0-5
+    pip_desc.layout.attrs[ATTR_Shader3DLit_pos].buffer_index = 0;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_pos].format = SG_VERTEXFORMAT_FLOAT3;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_pos].offset = 0;
     
-    pip_desc.layout.attrs[ATTR_Shader3D_normal_in].buffer_index = 0;
-    pip_desc.layout.attrs[ATTR_Shader3D_normal_in].format = SG_VERTEXFORMAT_FLOAT3;
-    pip_desc.layout.attrs[ATTR_Shader3D_normal_in].offset = 12;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_normal_in].buffer_index = 0;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_normal_in].format = SG_VERTEXFORMAT_FLOAT3;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_normal_in].offset = 12;
     
-    pip_desc.layout.attrs[ATTR_Shader3D_uv_in].buffer_index = 0;
-    pip_desc.layout.attrs[ATTR_Shader3D_uv_in].format = SG_VERTEXFORMAT_FLOAT2;
-    pip_desc.layout.attrs[ATTR_Shader3D_uv_in].offset = 24;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_uv_in].buffer_index = 0;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_uv_in].format = SG_VERTEXFORMAT_FLOAT2;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_uv_in].offset = 24;
     
-    pip_desc.layout.attrs[ATTR_Shader3D_color_in].buffer_index = 0;
-    pip_desc.layout.attrs[ATTR_Shader3D_color_in].format = SG_VERTEXFORMAT_FLOAT4;
-    pip_desc.layout.attrs[ATTR_Shader3D_color_in].offset = 32;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_color_in].buffer_index = 0;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_color_in].format = SG_VERTEXFORMAT_FLOAT4;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_color_in].offset = 32;
+    
+    // ADDED: Bone skinning attributes (positions 4-5)
+    pip_desc.layout.attrs[ATTR_Shader3DLit_bone_ids].buffer_index = 0;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_bone_ids].format = SG_VERTEXFORMAT_INT4;  // Changed to INT4
+    pip_desc.layout.attrs[ATTR_Shader3DLit_bone_ids].offset = 48;  // After color (32 + 16 = 48)
+    
+    pip_desc.layout.attrs[ATTR_Shader3DLit_bone_weights].buffer_index = 0;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_bone_weights].format = SG_VERTEXFORMAT_FLOAT4;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_bone_weights].offset = 64;  // After bone_ids (48 + 16 = 64)
+    // NOTE: Padding (64-96) is automatically skipped due to stride
     
     pip_desc.primitive_type = SG_PRIMITIVETYPE_TRIANGLES;
     pip_desc.cull_mode = SG_CULLMODE_NONE;
@@ -149,92 +159,123 @@ bool Renderer::Init() {
     pip_desc.colors[0].blend.dst_factor_alpha = SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
     pip_desc.colors[0].blend.op_alpha = SG_BLENDOP_ADD;
 
-    // Per-instance attributes (mat4 = 4x vec4) from buffer 1
+    // Per-instance attributes (mat4 = 4x vec4) from buffer 1 - POSITIONS 6-9
     pip_desc.layout.buffers[1].step_func = SG_VERTEXSTEP_PER_INSTANCE;
     pip_desc.layout.buffers[1].stride = (int)sizeof(hmm_mat4);
 
-    pip_desc.layout.attrs[4].buffer_index = 1;
-    pip_desc.layout.attrs[4].format = SG_VERTEXFORMAT_FLOAT4;
-    pip_desc.layout.attrs[4].offset = 0;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_inst_row0].buffer_index = 1;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_inst_row0].format = SG_VERTEXFORMAT_FLOAT4;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_inst_row0].offset = 0;
 
-    pip_desc.layout.attrs[5].buffer_index = 1;
-    pip_desc.layout.attrs[5].format = SG_VERTEXFORMAT_FLOAT4;
-    pip_desc.layout.attrs[5].offset = 16;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_inst_row1].buffer_index = 1;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_inst_row1].format = SG_VERTEXFORMAT_FLOAT4;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_inst_row1].offset = 16;
 
-    pip_desc.layout.attrs[6].buffer_index = 1;
-    pip_desc.layout.attrs[6].format = SG_VERTEXFORMAT_FLOAT4;
-    pip_desc.layout.attrs[6].offset = 32;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_inst_row2].buffer_index = 1;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_inst_row2].format = SG_VERTEXFORMAT_FLOAT4;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_inst_row2].offset = 32;
 
-    pip_desc.layout.attrs[7].buffer_index = 1;
-    pip_desc.layout.attrs[7].format = SG_VERTEXFORMAT_FLOAT4;
-    pip_desc.layout.attrs[7].offset = 48;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_inst_row3].buffer_index = 1;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_inst_row3].format = SG_VERTEXFORMAT_FLOAT4;
+    pip_desc.layout.attrs[ATTR_Shader3DLit_inst_row3].offset = 48;
 
-    // Create 3D pipeline with depth testing
-    pip_3d_ = sg_make_pipeline(&pip_desc);
-
-    // Create 3D pipeline without depth (not used currently)
-    sg_pipeline_desc pip_3d_no_depth_desc = pip_desc;
-    pip_3d_no_depth_desc.depth.compare = SG_COMPAREFUNC_ALWAYS;
-    pip_3d_no_depth_desc.depth.write_enabled = false;
-    pip_3d_no_depth_ = sg_make_pipeline(&pip_3d_no_depth_desc);
-
-    // Create 2D pipeline for textured quads
-    pip_desc.shader = shader_2d;
+    // Create 3D lit pipeline (this is now the main pipeline)
+    pip_3d_lit_ = sg_make_pipeline(&pip_desc);
     
-    // Update attribute indices for 2D shader
-    pip_desc.layout.attrs[ATTR_Shader2D_pos].buffer_index = 0;
-    pip_desc.layout.attrs[ATTR_Shader2D_pos].format = SG_VERTEXFORMAT_FLOAT3;
-    pip_desc.layout.attrs[ATTR_Shader2D_pos].offset = 0;
+    // FIXED: Create NEW pipeline descriptor for 2D shader (don't reuse pip_desc)
+    sg_pipeline_desc pip_2d_desc = {};
+    pip_2d_desc.shader = shader_2d;
     
-    pip_desc.layout.attrs[ATTR_Shader2D_normal_in].buffer_index = 0;
-    pip_desc.layout.attrs[ATTR_Shader2D_normal_in].format = SG_VERTEXFORMAT_FLOAT3;
-    pip_desc.layout.attrs[ATTR_Shader2D_normal_in].offset = 12;
+    // Configure buffer[0] stride for 2D vertices (still 96 bytes due to Vertex struct)
+    pip_2d_desc.layout.buffers[0].stride = sizeof(Vertex);
     
-    pip_desc.layout.attrs[ATTR_Shader2D_uv_in].buffer_index = 0;
-    pip_desc.layout.attrs[ATTR_Shader2D_uv_in].format = SG_VERTEXFORMAT_FLOAT2;
-    pip_desc.layout.attrs[ATTR_Shader2D_uv_in].offset = 24;
+    // Per-vertex attributes for 2D shader (NO BONE ATTRIBUTES)
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_pos].buffer_index = 0;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_pos].format = SG_VERTEXFORMAT_FLOAT3;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_pos].offset = 0;
     
-    pip_desc.layout.attrs[ATTR_Shader2D_color_in].buffer_index = 0;
-    pip_desc.layout.attrs[ATTR_Shader2D_color_in].format = SG_VERTEXFORMAT_FLOAT4;
-    pip_desc.layout.attrs[ATTR_Shader2D_color_in].offset = 32;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_normal_in].buffer_index = 0;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_normal_in].format = SG_VERTEXFORMAT_FLOAT3;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_normal_in].offset = 12;
     
-    pip_2d_ = sg_make_pipeline(&pip_desc);
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_uv_in].buffer_index = 0;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_uv_in].format = SG_VERTEXFORMAT_FLOAT2;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_uv_in].offset = 24;
+    
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_color_in].buffer_index = 0;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_color_in].format = SG_VERTEXFORMAT_FLOAT4;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_color_in].offset = 32;
+    
+    // NOTE: NO bone attributes for 2D shader!
+    
+    pip_2d_desc.primitive_type = SG_PRIMITIVETYPE_TRIANGLES;
+    pip_2d_desc.cull_mode = SG_CULLMODE_NONE;
+    pip_2d_desc.index_type = SG_INDEXTYPE_UINT16;
+    
+    // Enable depth testing
+    pip_2d_desc.depth.compare = SG_COMPAREFUNC_LESS_EQUAL;
+    pip_2d_desc.depth.write_enabled = true;
+    
+    pip_2d_desc.colors[0].blend.enabled = true;
+    pip_2d_desc.colors[0].blend.src_factor_rgb = SG_BLENDFACTOR_SRC_ALPHA;
+    pip_2d_desc.colors[0].blend.dst_factor_rgb = SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+    pip_2d_desc.colors[0].blend.op_rgb = SG_BLENDOP_ADD;
+    pip_2d_desc.colors[0].blend.src_factor_alpha = SG_BLENDFACTOR_ONE;
+    pip_2d_desc.colors[0].blend.dst_factor_alpha = SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+    pip_2d_desc.colors[0].blend.op_alpha = SG_BLENDOP_ADD;
+
+    // Per-instance attributes (mat4 = 4x vec4) from buffer 1
+    pip_2d_desc.layout.buffers[1].step_func = SG_VERTEXSTEP_PER_INSTANCE;
+    pip_2d_desc.layout.buffers[1].stride = (int)sizeof(hmm_mat4);
+
+    // Instance matrix uses indices 4-7 for 2D shader (no bone data to skip)
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_inst_row0].buffer_index = 1;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_inst_row0].format = SG_VERTEXFORMAT_FLOAT4;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_inst_row0].offset = 0;
+
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_inst_row1].buffer_index = 1;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_inst_row1].format = SG_VERTEXFORMAT_FLOAT4;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_inst_row1].offset = 16;
+
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_inst_row2].buffer_index = 1;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_inst_row2].format = SG_VERTEXFORMAT_FLOAT4;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_inst_row2].offset = 32;
+
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_inst_row3].buffer_index = 1;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_inst_row3].format = SG_VERTEXFORMAT_FLOAT4;
+    pip_2d_desc.layout.attrs[ATTR_Shader2D_inst_row3].offset = 48;
+    
+    pip_2d_ = sg_make_pipeline(&pip_2d_desc);
 
     // Create 2D screen-space pipeline (no depth)
-    sg_pipeline_desc pip_2d_screen_desc = pip_desc;
+    sg_pipeline_desc pip_2d_screen_desc = pip_2d_desc; // Copy from 2D desc, not 3D!
     pip_2d_screen_desc.depth.compare = SG_COMPAREFUNC_ALWAYS;
     pip_2d_screen_desc.depth.write_enabled = false;
     pip_2d_no_depth_ = sg_make_pipeline(&pip_2d_screen_desc);
 
-    // Create 3D lit pipeline
-    sg_pipeline_desc pip_lit_desc = pip_desc;
-    pip_lit_desc.shader = sg_make_shader(Shader3DLit_shader_desc(sg_query_backend()));
-    pip_3d_lit_ = sg_make_pipeline(&pip_lit_desc);
-
-    // Create 3D line pipeline (for wireframes)
+    // Create 3D line pipeline (for wireframes) - use lit shader
     printf("Creating line rendering pipeline...\n");
-    sg_pipeline_desc pip_lines_desc = pip_desc;
-    pip_lines_desc.shader = shader_3d;
+    sg_pipeline_desc pip_lines_desc = pip_desc; // Use 3D lit desc
     pip_lines_desc.primitive_type = SG_PRIMITIVETYPE_LINES;
-    pip_lines_desc.depth.compare = SG_COMPAREFUNC_LESS_EQUAL;  // Normal depth testing
-    pip_lines_desc.depth.write_enabled = false;  // Don't write depth
+    pip_lines_desc.depth.compare = SG_COMPAREFUNC_LESS_EQUAL;
+    pip_lines_desc.depth.write_enabled = false;
     pip_3d_lines_ = sg_make_pipeline(&pip_lines_desc);
     
     // ADDED: Create 3D line pipeline for gizmos (NO depth test - always on top)
     printf("Creating gizmo line rendering pipeline (no depth test)...\n");
     sg_pipeline_desc pip_gizmo_desc = pip_lines_desc;
-    pip_gizmo_desc.depth.compare = SG_COMPAREFUNC_ALWAYS;  // Always pass depth test
-    pip_gizmo_desc.depth.write_enabled = false;  // Don't write depth
+    pip_gizmo_desc.depth.compare = SG_COMPAREFUNC_ALWAYS;
+    pip_gizmo_desc.depth.write_enabled = false;
     pip_3d_lines_no_depth_ = sg_make_pipeline(&pip_gizmo_desc);
 
     // Initialize lighting params
     fs_params_ = {};
-    fs_params_.ambient_data = HMM_Vec4(0.3f, 0.3f, 0.4f, 0.2f); // ambient color + intensity
-    fs_params_.sun_data = HMM_Vec4(0.0f, -1.0f, 0.0f, 0.0f); // sun direction + intensity (disabled initially)
-    fs_params_.sun_color_misc = HMM_Vec4(1.0f, 1.0f, 0.9f, 0.0f); // sun color + light count
+    fs_params_.ambient_data = HMM_Vec4(0.3f, 0.3f, 0.4f, 0.2f);
+    fs_params_.sun_data = HMM_Vec4(0.0f, -1.0f, 0.0f, 0.0f);
+    fs_params_.sun_color_misc = HMM_Vec4(1.0f, 1.0f, 0.9f, 0.0f);
     camera_pos_ = HMM_Vec3(0.0f, 0.0f, 0.0f);
 
-    printf("Renderer: Initialized with 3D and 2D shader support\n");
+    printf("Renderer: Initialized with Shader3DLit and Shader2D support\n");
     return true;
 }
 
@@ -433,9 +474,18 @@ void Renderer::Render(const hmm_mat4& view_proj) {
     sg_apply_pipeline(pip_3d_lit_);
     
     // Apply vertex shader uniforms
+    vs_params_.mvp = view_proj;
+    vs_params_.is_screen_space = 0.0f;
+    vs_params_.has_bones = 0.0f;  // ADDED: Default to no bones
+    
+    // Clear bone transforms to identity
+    for (int i = 0; i < 128; ++i) {
+        vs_params_.bone_transforms[i] = HMM_Mat4d(1.0f);
+    }
+    
     sg_apply_uniforms(UB_vs_params, SG_RANGE(vs_params_));
     
-    // Apply fragment shader params for lighting (UB_fs_params is slot 1)
+    // Apply fragment shader params for lighting
     sg_apply_uniforms(UB_fs_params, SG_RANGE(fs_params_));
     
     // CHANGED: Exclude screen-space instances AND wireframe meshes
@@ -817,4 +867,12 @@ const Model3D* Renderer::GetModelData(int meshId) const {
         return &it->second;
     }
     return nullptr;
+}
+
+void Renderer::SetInstanceBoneTransforms(int instanceId, const std::vector<hmm_mat4>& boneTransforms) {
+    if (instanceId < 0 || instanceId >= (int)instances_.size()) return;
+    
+    // Store bone transforms with the instance
+    // You'll need to add a field to ModelInstance to store these
+    // For now, we'll pass them directly during rendering
 }

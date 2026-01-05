@@ -29,12 +29,12 @@ void WireframeManager::Init(ECS* ecsPtr, Renderer* rendererPtr) {
     this->m_renderer = rendererPtr;
 }
 
-// ADDED: Implementation of CreateWireframeCube
+// FIXED: Use calloc to zero-initialize all vertex data including bone fields
 void WireframeManager::CreateWireframeCube(float size, hmm_vec3 color, int& outMeshId) {
     Model3D mesh = {};
     mesh.vertex_count = 8;
     mesh.index_count = 24; // 12 edges * 2 vertices per edge
-    mesh.vertices = (Vertex*)malloc(sizeof(Vertex) * 8);
+    mesh.vertices = (Vertex*)calloc(8, sizeof(Vertex)); // CHANGED: calloc zeros all fields
     mesh.indices = (uint16_t*)malloc(sizeof(uint16_t) * 24);
     
     float halfSize = size * 0.5f;
@@ -52,18 +52,37 @@ void WireframeManager::CreateWireframeCube(float size, hmm_vec3 color, int& outM
     };
     
     for (int i = 0; i < 8; i++) {
+        // Position
         mesh.vertices[i].pos[0] = positions[i][0];
         mesh.vertices[i].pos[1] = positions[i][1];
         mesh.vertices[i].pos[2] = positions[i][2];
+        
+        // Color
         mesh.vertices[i].color[0] = color.X;
         mesh.vertices[i].color[1] = color.Y;
         mesh.vertices[i].color[2] = color.Z;
         mesh.vertices[i].color[3] = 1.0f; // Fully opaque
+        
+        // Normal
         mesh.vertices[i].normal[0] = 0.0f;
         mesh.vertices[i].normal[1] = 1.0f;
         mesh.vertices[i].normal[2] = 0.0f;
+        
+        // UV
         mesh.vertices[i].uv[0] = 0.0f;
         mesh.vertices[i].uv[1] = 0.0f;
+        
+        // NOTE: boneIds, boneWeights, and padding are already zeroed by calloc
+        // But we can be explicit for clarity:
+        mesh.vertices[i].boneIds[0] = 0;
+        mesh.vertices[i].boneIds[1] = 0;
+        mesh.vertices[i].boneIds[2] = 0;
+        mesh.vertices[i].boneIds[3] = 0;
+        
+        mesh.vertices[i].boneWeights[0] = 0.0f;
+        mesh.vertices[i].boneWeights[1] = 0.0f;
+        mesh.vertices[i].boneWeights[2] = 0.0f;
+        mesh.vertices[i].boneWeights[3] = 0.0f;
     }
     
     // 12 edges of the cube (as line pairs)
@@ -106,7 +125,7 @@ void WireframeManager::CreateCollisionSphereMesh() {
     Model3D mesh = {};
     mesh.vertex_count = numVertices;
     mesh.index_count = numIndices;
-    mesh.vertices = (Vertex*)malloc(sizeof(Vertex) * numVertices);
+    mesh.vertices = (Vertex*)calloc(numVertices, sizeof(Vertex)); // CHANGED: calloc zeros all fields
     mesh.indices = (uint16_t*)malloc(sizeof(uint16_t) * numIndices);
     
     // Create wireframe sphere (latitude/longitude lines)
@@ -120,18 +139,27 @@ void WireframeManager::CreateCollisionSphereMesh() {
             float y = cosf(phi);
             float z = sinf(phi) * sinf(theta);
             
+            // Position
             mesh.vertices[vIdx].pos[0] = x;
             mesh.vertices[vIdx].pos[1] = y;
             mesh.vertices[vIdx].pos[2] = z;
+            
+            // Color
             mesh.vertices[vIdx].color[0] = 1.0f;
             mesh.vertices[vIdx].color[1] = 0.0f;
             mesh.vertices[vIdx].color[2] = 0.0f;
             mesh.vertices[vIdx].color[3] = 0.3f; // Semi-transparent red
+            
+            // Normal
             mesh.vertices[vIdx].normal[0] = 0.0f;
             mesh.vertices[vIdx].normal[1] = 1.0f;
             mesh.vertices[vIdx].normal[2] = 0.0f;
+            
+            // UV
             mesh.vertices[vIdx].uv[0] = 0.0f;
             mesh.vertices[vIdx].uv[1] = 0.0f;
+            
+            // NOTE: boneIds, boneWeights, and padding are already zeroed by calloc
             vIdx++;
         }
     }
@@ -157,7 +185,7 @@ void WireframeManager::CreateCollisionBoxMesh() {
     Model3D mesh = {};
     mesh.vertex_count = 8;
     mesh.index_count = 24; // 12 edges * 2 vertices
-    mesh.vertices = (Vertex*)malloc(sizeof(Vertex) * 8);
+    mesh.vertices = (Vertex*)calloc(8, sizeof(Vertex)); // CHANGED: calloc zeros all fields
     mesh.indices = (uint16_t*)malloc(sizeof(uint16_t) * 24);
     
     // 8 corners of unit cube
@@ -173,18 +201,27 @@ void WireframeManager::CreateCollisionBoxMesh() {
     };
     
     for (int i = 0; i < 8; i++) {
+        // Position
         mesh.vertices[i].pos[0] = positions[i][0];
         mesh.vertices[i].pos[1] = positions[i][1];
         mesh.vertices[i].pos[2] = positions[i][2];
+        
+        // Color
         mesh.vertices[i].color[0] = 1.0f;
         mesh.vertices[i].color[1] = 0.0f;
         mesh.vertices[i].color[2] = 0.0f;
         mesh.vertices[i].color[3] = 0.3f; // Semi-transparent red
+        
+        // Normal
         mesh.vertices[i].normal[0] = 0.0f;
         mesh.vertices[i].normal[1] = 1.0f;
         mesh.vertices[i].normal[2] = 0.0f;
+        
+        // UV
         mesh.vertices[i].uv[0] = 0.0f;
         mesh.vertices[i].uv[1] = 0.0f;
+        
+        // NOTE: boneIds, boneWeights, and padding are already zeroed by calloc
     }
     
     // 12 edges of the cube
@@ -208,7 +245,7 @@ void WireframeManager::CreateCollisionPlaneMesh() {
     Model3D mesh = {};
     mesh.vertex_count = numVertices;
     mesh.index_count = numVertices;
-    mesh.vertices = (Vertex*)malloc(sizeof(Vertex) * numVertices);
+    mesh.vertices = (Vertex*)calloc(numVertices, sizeof(Vertex)); // CHANGED: calloc zeros all fields
     mesh.indices = (uint16_t*)malloc(sizeof(uint16_t) * numVertices);
     
     float halfSize = gridSize * cellSize * 0.5f;
@@ -217,6 +254,8 @@ void WireframeManager::CreateCollisionPlaneMesh() {
     // Horizontal lines
     for (int i = 0; i <= gridSize; i++) {
         float z = -halfSize + i * cellSize;
+        
+        // First vertex of horizontal line
         mesh.vertices[vIdx].pos[0] = -halfSize;
         mesh.vertices[vIdx].pos[1] = 0.0f;
         mesh.vertices[vIdx].pos[2] = z;
@@ -230,8 +269,10 @@ void WireframeManager::CreateCollisionPlaneMesh() {
         mesh.vertices[vIdx].uv[0] = 0.0f;
         mesh.vertices[vIdx].uv[1] = 0.0f;
         mesh.indices[vIdx] = vIdx;
+        // NOTE: boneIds, boneWeights, and padding are already zeroed by calloc
         vIdx++;
         
+        // Second vertex of horizontal line
         mesh.vertices[vIdx].pos[0] = halfSize;
         mesh.vertices[vIdx].pos[1] = 0.0f;
         mesh.vertices[vIdx].pos[2] = z;
@@ -245,12 +286,15 @@ void WireframeManager::CreateCollisionPlaneMesh() {
         mesh.vertices[vIdx].uv[0] = 0.0f;
         mesh.vertices[vIdx].uv[1] = 0.0f;
         mesh.indices[vIdx] = vIdx;
+        // NOTE: boneIds, boneWeights, and padding are already zeroed by calloc
         vIdx++;
     }
     
     // Vertical lines
     for (int i = 0; i <= gridSize; i++) {
         float x = -halfSize + i * cellSize;
+        
+        // First vertex of vertical line
         mesh.vertices[vIdx].pos[0] = x;
         mesh.vertices[vIdx].pos[1] = 0.0f;
         mesh.vertices[vIdx].pos[2] = -halfSize;
@@ -264,8 +308,10 @@ void WireframeManager::CreateCollisionPlaneMesh() {
         mesh.vertices[vIdx].uv[0] = 0.0f;
         mesh.vertices[vIdx].uv[1] = 0.0f;
         mesh.indices[vIdx] = vIdx;
+        // NOTE: boneIds, boneWeights, and padding are already zeroed by calloc
         vIdx++;
         
+        // Second vertex of vertical line
         mesh.vertices[vIdx].pos[0] = x;
         mesh.vertices[vIdx].pos[1] = 0.0f;
         mesh.vertices[vIdx].pos[2] = halfSize;
@@ -279,6 +325,7 @@ void WireframeManager::CreateCollisionPlaneMesh() {
         mesh.vertices[vIdx].uv[0] = 0.0f;
         mesh.vertices[vIdx].uv[1] = 0.0f;
         mesh.indices[vIdx] = vIdx;
+        // NOTE: boneIds, boneWeights, and padding are already zeroed by calloc
         vIdx++;
     }
     
