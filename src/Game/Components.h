@@ -165,6 +165,12 @@ struct AIController {
 struct Animator {
     int currentClip = -1;
     float time = 0.0f;
+    bool playing = true;
+    bool loop = true;
+    float speed = 1.0f;
+    
+    // ADDED: Bone transformation matrices (computed each frame)
+    std::vector<hmm_mat4> boneTransforms;
 };
 
 struct Billboard {

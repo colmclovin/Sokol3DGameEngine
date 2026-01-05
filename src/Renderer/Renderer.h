@@ -57,6 +57,9 @@ public:
     void SetCameraPosition(const hmm_vec3& position);
     void SetSunLight(const hmm_vec3& direction, const hmm_vec3& color, float intensity);
 
+    // ADDED: Get model data for animation (returns nullptr if invalid meshId)
+    const Model3D* GetModelData(int meshId) const;
+
 private:
     struct MeshMeta {
         int mesh_id;
@@ -124,4 +127,7 @@ private:
     hmm_vec3 camera_pos_;
 
     bool gpu_buffers_dirty_;
+
+    // ADDED: Store full model data for animation
+    std::unordered_map<int, Model3D> model_data_;
 };

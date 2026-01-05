@@ -192,6 +192,9 @@ void init(void) {
     printf("=== INITIALIZING RENDERER ===\n");
     renderer.Init();
 
+    // ADDED: Give ECS access to renderer for animations
+    ecs.SetRenderer(&renderer);
+
     // Load models
     printf("\n=== LOADING MODELS ===\n");
     models3D[0] = loader.LoadModel("assets/models/cartoon_lowpoly_trees_blend.glb");
@@ -214,10 +217,19 @@ void init(void) {
     wireframeManager.CreateWireframeMeshes();
     transformGizmo.CreateGizmoMeshes();  // ADDED
     
+// In the init() function, after creating the player:
     // Create player
     printf("\n=== CREATING PLAYER ===\n");
     player = new PlayerController(ecs, renderer, meshPlayerId, gameState);
-    player->Spawn(HMM_Vec3(0.0f, 2.0f, 0.0f)); // CHANGED: Spawn above ground, will fall with gravity
+    player->Spawn(HMM_Vec3(0.0f, 2.0f, 0.0f));
+
+    // ADDED: Set up idle animation for player model
+    // NOTE: Currently animation system is minimal - just initialize the component
+    Animator playerAnimator;
+    playerAnimator.currentClip = 0; // First animation clip (idle animation from test1.glb)
+    playerAnimator.time = 0.0f;
+    ecs.AddAnimator(player->Entity(), playerAnimator);
+    printf("Player animator initialized (will play clip 0)\n");
 
     // ADDED: Set player reference in EditorUI
     editorUI.SetPlayer(player);
@@ -475,9 +487,9 @@ void frame(void) {
         ecs.UpdateAI(dt);
         ecs.UpdatePhysics(dt);
         ecs.UpdateCollisions(dt); // ADDED: Enable collision detection
-        ecs.UpdateAnimation(dt);
+     
     }
-
+    ecs.UpdateAnimation(dt);
     if (player) {
         ecs.UpdateBillboards(player->CameraPosition());
     }

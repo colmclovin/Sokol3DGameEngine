@@ -1,6 +1,7 @@
 #include "ECS.h"
 #include <cstdlib>
 #include <cmath>
+#include <map>  // ADDED: For std::map in ComputeBoneTransform
 #include "../External/HandmadeMath.h"
 
 ECS::ECS() = default;
@@ -444,7 +445,7 @@ bool ECS::SphereVsPlane(const hmm_vec3& spherePos, float radius, const hmm_vec3&
             // Contact point on the plane surface
             outInfo->contactPoint = HMM_SubtractVec3(spherePos, HMM_MultiplyVec3f(planeNormal, distanceToPlane));
             
-            printf("DEBUG: Sphere-Plane collision | dist=%.3f, penetration=%.3f\n", distanceToPlane, outInfo->penetration);
+            //printf("DEBUG: Sphere-Plane collision | dist=%.3f, penetration=%.3f\n", distanceToPlane, outInfo->penetration);
         }
         return true;
     }
@@ -471,7 +472,7 @@ void ECS::ResolveCollision(EntityId a, EntityId b, const CollisionInfo& info) {
     // ADDED: Clamp penetration to prevent explosion
     float clampedPenetration = fminf(info.penetration, 10.0f);  // Max 10 units correction per frame
     if (info.penetration > 10.0f) {
-        printf("WARNING: Large penetration %.2f clamped to 10.0\n", info.penetration);
+        //printf("WARNING: Large penetration %.2f clamped to 10.0\n", info.penetration);
     }
     
     // FIXED: Position correction along the collision normal
@@ -494,8 +495,8 @@ void ECS::ResolveCollision(EntityId a, EntityId b, const CollisionInfo& info) {
         // Move A away from B along the normal (push sphere UP out of ground)
         transA->position = HMM_AddVec3(transA->position, correction);
         
-        printf("Corrected entity A by %.3f along normal (%.2f, %.2f, %.2f)\n", 
-               clampedPenetration, info.normal.X, info.normal.Y, info.normal.Z);
+       //printf("Corrected entity A by %.3f along normal (%.2f, %.2f, %.2f)\n", 
+              // clampedPenetration, info.normal.X, info.normal.Y, info.normal.Z);
     } else if (!bStatic) {
         // B is dynamic, A is static
         // Move B away from A along the normal
@@ -526,7 +527,7 @@ void ECS::ResolveCollision(EntityId a, EntityId b, const CollisionInfo& info) {
             // FIXED: Stop all downward velocity (set Y component to 0 for ground collision)
             if (fabsf(info.normal.Y) > 0.9f) {  // Ground plane (normal mostly vertical)
                 rbA->velocity.Y = 0.0f;  // Stop falling
-                printf("Stopped downward velocity\n");
+               // printf("Stopped downward velocity\n");
             } else {
                 // General case: reflect velocity
                 hmm_vec3 normalVelocity = HMM_MultiplyVec3f(info.normal, velocityAlongNormal);
@@ -545,11 +546,162 @@ void ECS::ResolveCollision(EntityId a, EntityId b, const CollisionInfo& info) {
     }
 }
 
+// Add these helper functions before UpdateAnimation:
+static hmm_vec3 LerpVec3(const hmm_vec3& a, float t, const hmm_vec3& b) {
+    return HMM_Vec3(
+        HMM_Lerp(a.X, t, b.X),
+        HMM_Lerp(a.Y, t, b.Y),
+        HMM_Lerp(a.Z, t, b.Z)
+    );
+}
+
+static hmm_vec3 InterpolatePosition(const std::vector<PositionKey>& keys, float time) {
+    if (keys.empty()) return HMM_Vec3(0, 0, 0);
+    if (keys.size() == 1) return keys[0].value;
+    
+    // Find surrounding keyframes
+    for (size_t i = 0; i < keys.size() - 1; ++i) {
+        if (time < keys[i + 1].time) {
+            float t = (time - keys[i].time) / (keys[i + 1].time - keys[i].time);
+            return LerpVec3(keys[i].value, t, keys[i + 1].value);
+        }
+    }
+    return keys.back().value;
+}
+
+static hmm_quaternion InterpolateRotation(const std::vector<RotationKey>& keys, float time) {
+    if (keys.empty()) return HMM_Quaternion(0, 0, 0, 1);
+    if (keys.size() == 1) return keys[0].value;
+    
+    for (size_t i = 0; i < keys.size() - 1; ++i) {
+        if (time < keys[i + 1].time) {
+            float t = (time - keys[i].time) / (keys[i + 1].time - keys[i].time);
+            return HMM_Slerp(keys[i].value, t, keys[i + 1].value);  // FIXED: Use HMM_Slerp (lowercase 'l')
+        }
+    }
+    return keys.back().value;
+}
+
+static hmm_vec3 InterpolateScale(const std::vector<ScaleKey>& keys, float time) {
+    if (keys.empty()) return HMM_Vec3(1, 1, 1);
+    if (keys.size() == 1) return keys[0].value;
+    
+    for (size_t i = 0; i < keys.size() - 1; ++i) {
+        if (time < keys[i + 1].time) {
+            float t = (time - keys[i].time) / (keys[i + 1].time - keys[i].time);
+            return LerpVec3(keys[i].value, t, keys[i + 1].value);
+        }
+    }
+    return keys.back().value;
+}
+
+// Add this helper function to compute bone transforms recursively:
+static void ComputeBoneTransform(
+    int boneIndex,
+    const Skeleton& skeleton,
+    const std::map<std::string, hmm_mat4>& boneTransforms,
+    const hmm_mat4& parentTransform,
+    std::vector<hmm_mat4>& finalTransforms)
+{
+    const Bone& bone = skeleton.bones[boneIndex];
+    
+    // Get this bone's local transform from animation
+    hmm_mat4 localTransform = HMM_Mat4d(1.0f);
+    auto it = boneTransforms.find(bone.name);
+    if (it != boneTransforms.end()) {
+        localTransform = it->second;
+    }
+    
+    // Combine with parent transform
+    hmm_mat4 globalTransform = HMM_MultiplyMat4(parentTransform, localTransform);
+    
+    // Final transform = globalInverse * globalTransform * offsetMatrix
+    hmm_mat4 finalTransform = HMM_MultiplyMat4(
+        HMM_MultiplyMat4(skeleton.globalInverseTransform, globalTransform),
+        bone.offsetMatrix
+    );
+    
+    finalTransforms[boneIndex] = finalTransform;
+    
+    // Process children
+    for (size_t i = 0; i < skeleton.bones.size(); ++i) {
+        if (skeleton.bones[i].parentIndex == boneIndex) {
+            ComputeBoneTransform(i, skeleton, boneTransforms, globalTransform, finalTransforms);
+        }
+    }
+}
+
+// Now replace UpdateAnimation with this complete version:
 void ECS::UpdateAnimation(float dt) {
+    if (!renderer_) return;  // Need renderer to access model data
+    
     for (auto &kv : animators_) {
-        Animator &a = kv.second;
-        a.time += dt;
-        if (a.time > 10.0f) a.time = 0.0f;
+        EntityId entityId = kv.first;
+        Animator &animator = kv.second;
+        
+        if (!animator.playing || animator.currentClip < 0) continue;
+        
+        // Get the model for this entity
+        int meshId = GetMeshId(entityId);
+        if (meshId < 0) continue;
+        
+        const Model3D* model = renderer_->GetModelData(meshId);
+        if (!model || !model->hasAnimations || animator.currentClip >= (int)model->animations.size()) {
+            continue;
+        }
+        
+        const AnimationClip& clip = model->animations[animator.currentClip];
+        
+        // Update time
+        animator.time += dt * animator.speed;
+        
+        // Convert time to ticks
+        float animationTime = animator.time * clip.ticksPerSecond;
+        
+        // Loop animation
+        if (animator.loop && animationTime > clip.duration) {
+            animationTime = fmodf(animationTime, clip.duration);
+            animator.time = animationTime / clip.ticksPerSecond;
+        } else if (!animator.loop && animationTime > clip.duration) {
+            animationTime = clip.duration;
+            animator.time = animationTime / clip.ticksPerSecond;
+            animator.playing = false;
+        }
+        
+        // Compute bone transforms from animation channels
+        std::map<std::string, hmm_mat4> boneTransforms;
+        
+        for (const auto& channel : clip.channels) {
+            // Interpolate position, rotation, scale
+            hmm_vec3 position = InterpolatePosition(channel.positionKeys, animationTime);
+            hmm_quaternion rotation = InterpolateRotation(channel.rotationKeys, animationTime);
+            hmm_vec3 scale = InterpolateScale(channel.scaleKeys, animationTime);
+            
+            // Build transformation matrix: T * R * S
+            hmm_mat4 translation = HMM_Translate(position);
+            hmm_mat4 rotationMat = HMM_QuaternionToMat4(rotation);
+            hmm_mat4 scaleMat = HMM_Scale(scale);
+            
+            hmm_mat4 localTransform = HMM_MultiplyMat4(
+                HMM_MultiplyMat4(translation, rotationMat),
+                scaleMat
+            );
+            
+            boneTransforms[channel.boneName] = localTransform;
+        }
+        
+        // Compute final bone transforms recursively
+        if (!model->skeleton.bones.empty()) {
+            animator.boneTransforms.resize(model->skeleton.bones.size());
+            
+            // Find root bones (parentIndex == -1) and compute hierarchy
+            for (size_t i = 0; i < model->skeleton.bones.size(); ++i) {
+                if (model->skeleton.bones[i].parentIndex == -1) {
+                    ComputeBoneTransform(i, model->skeleton, boneTransforms, 
+                                        HMM_Mat4d(1.0f), animator.boneTransforms);
+                }
+            }
+        }
     }
 }
 
@@ -876,7 +1028,7 @@ RaycastHit ECS::RaycastPhysics(const hmm_vec3& origin, const hmm_vec3& direction
     return closestHit;
 }
 
-// Add this helper function before RaycastSelectionNew
+// Add this helper function before RaycastSelection:
 bool ECS::RayBoxIntersect(const hmm_vec3& rayOrigin, const hmm_vec3& rayDir,
                           const hmm_vec3& boxMin, const hmm_vec3& boxMax,
                           float* outDistance) {

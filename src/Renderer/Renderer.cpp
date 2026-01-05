@@ -281,6 +281,7 @@ int Renderer::AddMesh(const Model3D& mesh) {
     }
 
     meshes_.emplace(meta.mesh_id, meta);
+    model_data_[meta.mesh_id] = mesh;  // ADDED: Store full model data
     gpu_buffers_dirty_ = true;
 
     printf("Renderer: Added mesh %d (%d verts, %d indices, %s)\n", 
@@ -572,6 +573,8 @@ void Renderer::Cleanup() {
         pip_3d_lines_no_depth_.id = SG_INVALID_ID; 
     }
     
+    model_data_.clear();  // ADDED: Clear model data
+    
     merged_vertices_.clear();
     merged_indices_.clear();
     meshes_.clear();
@@ -805,4 +808,13 @@ void Renderer::RenderGizmos(const hmm_mat4& view_proj) {
     
     bind_.vertex_buffers[1] = inst_vbuf_;
     sg_apply_bindings(&bind_);
+}
+
+// Add this implementation:
+const Model3D* Renderer::GetModelData(int meshId) const {
+    auto it = model_data_.find(meshId);
+    if (it != model_data_.end()) {
+        return &it->second;
+    }
+    return nullptr;
 }

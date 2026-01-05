@@ -139,6 +139,8 @@ public:
     const std::unordered_map<EntityId, Collider>& GetColliders() const { return colliders_; }
     const std::unordered_map<EntityId, Rigidbody>& GetRigidbodies() const { return rigidbodies_; } // ADDED
 
+    void SetRenderer(Renderer* renderer) { renderer_ = renderer; }  // ADDED
+
 private:
     EntityId nextId_ = 1;
     std::vector<EntityId> alive_;
@@ -156,6 +158,8 @@ private:
     std::unordered_map<EntityId, int> mesh_for_entity_;
     std::unordered_map<EntityId, int> instance_for_entity_;
     
+    Renderer* renderer_ = nullptr;  // ADDED: Reference to renderer for animation data
+
     // Collision helpers
     bool SphereVsSphere(const hmm_vec3& posA, float radiusA, const hmm_vec3& posB, float radiusB, CollisionInfo* outInfo);
     bool SphereVsBox(const hmm_vec3& spherePos, float radius, const hmm_vec3& boxPos, const hmm_vec3& boxHalfExtents, CollisionInfo* outInfo);
