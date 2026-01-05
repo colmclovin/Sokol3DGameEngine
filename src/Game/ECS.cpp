@@ -305,21 +305,8 @@ void ECS::UpdatePhysics(float dt) {
         // Integrate position
         t->position = HMM_AddVec3(t->position, HMM_MultiplyVec3f(rb.velocity, dt));
         
-        // Simple ground collision (Y = 0)
-        if (t->position.Y < 0.0f) {
-            t->position.Y = 0.0f;
-            
-            // Apply bounciness
-            if (rb.bounciness > 0.0f) {
-                rb.velocity.Y = -rb.velocity.Y * rb.bounciness;
-                // Stop bouncing if velocity is too small
-                if (fabsf(rb.velocity.Y) < 0.1f) {
-                    rb.velocity.Y = 0.0f;
-                }
-            } else {
-                rb.velocity.Y = 0.0f;
-            }
-        }
+        // REMOVED: Old hardcoded ground collision at Y=0
+        // This is now handled by UpdateCollisions() checking against the plane collider
     }
 }
 
@@ -356,19 +343,33 @@ void ECS::UpdateCollisions(float dt) {
     }
 }
 
-bool ECS::CheckCollision(EntityId a, EntityId b, CollisionInfo* outInfo) {
-    Collider* colA = GetCollider(a);
-    Collider* colB = GetCollider(b);
-    Transform* transA = GetTransform(a);
-    Transform* transB = GetTransform(b);
-    
+bool ECS::CheckCollision(EntityId a, EntityId b, CollisionInfo *outInfo) {
+    Collider *colA = GetCollider(a);
+    Collider *colB = GetCollider(b);
+    Transform *transA = GetTransform(a);
+    Transform *transB = GetTransform(b);
+
     if (!colA || !colB || !transA || !transB) return false;
-    
+
+    // ADDED: Sphere vs Plane (most important for ground collision!)
+    if (colA->type == ColliderType::Sphere && colB->type == ColliderType::Plane) {
+        return SphereVsPlane(transA->position, colA->radius, colB->planeNormal, colB->planeDistance, outInfo);
+    }
+    if (colA->type == ColliderType::Plane && colB->type == ColliderType::Sphere) {
+        bool result = SphereVsPlane(transB->position, colB->radius, colA->planeNormal, colA->planeDistance, outInfo);
+        if (result && outInfo) {
+            // Flip normal since we swapped order
+            outInfo->normal = HMM_MultiplyVec3f(outInfo->normal, -1.0f);
+            std::swap(outInfo->entityA, outInfo->entityB);
+        }
+        return result;
+    }
+
     // Sphere vs Sphere
     if (colA->type == ColliderType::Sphere && colB->type == ColliderType::Sphere) {
         return SphereVsSphere(transA->position, colA->radius, transB->position, colB->radius, outInfo);
     }
-    
+
     // Sphere vs Box
     if (colA->type == ColliderType::Sphere && colB->type == ColliderType::Box) {
         return SphereVsBox(transA->position, colA->radius, transB->position, colB->boxHalfExtents, outInfo);
@@ -382,15 +383,15 @@ bool ECS::CheckCollision(EntityId a, EntityId b, CollisionInfo* outInfo) {
         }
         return result;
     }
-    
+
     return false;
 }
 
-bool ECS::SphereVsSphere(const hmm_vec3& posA, float radiusA, const hmm_vec3& posB, float radiusB, CollisionInfo* outInfo) {
+bool ECS::SphereVsSphere(const hmm_vec3 &posA, float radiusA, const hmm_vec3 &posB, float radiusB, CollisionInfo *outInfo) {
     hmm_vec3 diff = HMM_SubtractVec3(posB, posA);
     float distSq = HMM_DotVec3(diff, diff);
     float radiusSum = radiusA + radiusB;
-    
+
     if (distSq < radiusSum * radiusSum) {
         if (outInfo) {
             float dist = sqrtf(distSq);
@@ -403,16 +404,16 @@ bool ECS::SphereVsSphere(const hmm_vec3& posA, float radiusA, const hmm_vec3& po
     return false;
 }
 
-bool ECS::SphereVsBox(const hmm_vec3& spherePos, float radius, const hmm_vec3& boxPos, const hmm_vec3& boxHalfExtents, CollisionInfo* outInfo) {
+bool ECS::SphereVsBox(const hmm_vec3 &spherePos, float radius, const hmm_vec3 &boxPos, const hmm_vec3 &boxHalfExtents, CollisionInfo *outInfo) {
     // Find closest point on box to sphere
     hmm_vec3 closestPoint;
     closestPoint.X = fmaxf(boxPos.X - boxHalfExtents.X, fminf(spherePos.X, boxPos.X + boxHalfExtents.X));
     closestPoint.Y = fmaxf(boxPos.Y - boxHalfExtents.Y, fminf(spherePos.Y, boxPos.Y + boxHalfExtents.Y));
     closestPoint.Z = fmaxf(boxPos.Z - boxHalfExtents.Z, fminf(spherePos.Z, boxPos.Z + boxHalfExtents.Z));
-    
+
     hmm_vec3 diff = HMM_SubtractVec3(spherePos, closestPoint);
     float distSq = HMM_DotVec3(diff, diff);
-    
+
     if (distSq < radius * radius) {
         if (outInfo) {
             float dist = sqrtf(distSq);
@@ -422,6 +423,32 @@ bool ECS::SphereVsBox(const hmm_vec3& spherePos, float radius, const hmm_vec3& b
         }
         return true;
     }
+    return false;
+}
+
+// ADDED: Sphere vs Plane collision detection
+bool ECS::SphereVsPlane(const hmm_vec3& spherePos, float radius, const hmm_vec3& planeNormal, float planeDistance, CollisionInfo* outInfo) {
+    // Distance from sphere center to plane (signed distance)
+    // Positive = above plane, Negative = below plane
+    float distanceToPlane = HMM_DotVec3(spherePos, planeNormal) - planeDistance;
+    
+    // Check if sphere intersects plane
+    if (distanceToPlane < radius) {
+        if (outInfo) {
+            // Penetration is how much the sphere has gone into the plane
+            outInfo->penetration = radius - distanceToPlane;
+            
+            // Normal points away from plane (upward for ground)
+            outInfo->normal = planeNormal;
+            
+            // Contact point on the plane surface
+            outInfo->contactPoint = HMM_SubtractVec3(spherePos, HMM_MultiplyVec3f(planeNormal, distanceToPlane));
+            
+            printf("DEBUG: Sphere-Plane collision | dist=%.3f, penetration=%.3f\n", distanceToPlane, outInfo->penetration);
+        }
+        return true;
+    }
+    
     return false;
 }
 
@@ -441,24 +468,38 @@ void ECS::ResolveCollision(EntityId a, EntityId b, const CollisionInfo& info) {
     
     if (aStatic && bStatic) return; // Both static, no resolution
     
-    // Position correction (separate objects)
-    float totalMass = 0.0f;
-    float massA = (rbA && !aStatic) ? rbA->mass : 0.0f;
-    float massB = (rbB && !bStatic) ? rbB->mass : 0.0f;
-    totalMass = massA + massB;
-    
-    if (totalMass < 0.001f) totalMass = 1.0f; // Avoid division by zero
-    
-    float correctionA = (!aStatic) ? (massB / totalMass) : 0.0f;
-    float correctionB = (!bStatic) ? (massA / totalMass) : 0.0f;
-    
-    hmm_vec3 correction = HMM_MultiplyVec3f(info.normal, info.penetration);
-    
-    if (!aStatic) {
-        transA->position = HMM_SubtractVec3(transA->position, HMM_MultiplyVec3f(correction, correctionA));
+    // ADDED: Clamp penetration to prevent explosion
+    float clampedPenetration = fminf(info.penetration, 10.0f);  // Max 10 units correction per frame
+    if (info.penetration > 10.0f) {
+        printf("WARNING: Large penetration %.2f clamped to 10.0\n", info.penetration);
     }
-    if (!bStatic) {
-        transB->position = HMM_AddVec3(transB->position, HMM_MultiplyVec3f(correction, correctionB));
+    
+    // FIXED: Position correction along the collision normal
+    hmm_vec3 correction = HMM_MultiplyVec3f(info.normal, clampedPenetration);
+    
+    if (!aStatic && !bStatic) {
+        // Both dynamic - split the correction based on mass
+        float totalMass = (rbA ? rbA->mass : 1.0f) + (rbB ? rbB->mass : 1.0f);
+        float massA = rbA ? rbA->mass : 1.0f;
+        float massB = rbB ? rbB->mass : 1.0f;
+        
+        float correctionA = massB / totalMass;
+        float correctionB = massA / totalMass;
+        
+        // Move A along normal (away from B)
+        transA->position = HMM_AddVec3(transA->position, HMM_MultiplyVec3f(correction, correctionA));
+        transB->position = HMM_SubtractVec3(transB->position, HMM_MultiplyVec3f(correction, correctionB));
+    } else if (!aStatic) {
+        // FIXED: A is dynamic, B is static (e.g., sphere vs plane)
+        // Move A away from B along the normal (push sphere UP out of ground)
+        transA->position = HMM_AddVec3(transA->position, correction);
+        
+        printf("Corrected entity A by %.3f along normal (%.2f, %.2f, %.2f)\n", 
+               clampedPenetration, info.normal.X, info.normal.Y, info.normal.Z);
+    } else if (!bStatic) {
+        // B is dynamic, A is static
+        // Move B away from A along the normal
+        transB->position = HMM_SubtractVec3(transB->position, correction);
     }
     
     // Velocity resolution (impulse-based)
@@ -466,29 +507,40 @@ void ECS::ResolveCollision(EntityId a, EntityId b, const CollisionInfo& info) {
         hmm_vec3 relativeVelocity = HMM_SubtractVec3(rbB->velocity, rbA->velocity);
         float velocityAlongNormal = HMM_DotVec3(relativeVelocity, info.normal);
         
-        if (velocityAlongNormal < 0.0f) return; // Objects moving apart
+        if (velocityAlongNormal >= 0.0f) return; // Objects moving apart
         
         float restitution = (rbA->bounciness + rbB->bounciness) * 0.5f;
         float impulseScalar = -(1.0f + restitution) * velocityAlongNormal;
-        impulseScalar /= (1.0f / massA + 1.0f / massB);
+        impulseScalar /= (1.0f / rbA->mass + 1.0f / rbB->mass);
         
         hmm_vec3 impulse = HMM_MultiplyVec3f(info.normal, impulseScalar);
         
-        rbA->velocity = HMM_SubtractVec3(rbA->velocity, HMM_MultiplyVec3f(impulse, 1.0f / massA));
-        rbB->velocity = HMM_AddVec3(rbB->velocity, HMM_MultiplyVec3f(impulse, 1.0f / massB));
+        rbA->velocity = HMM_SubtractVec3(rbA->velocity, HMM_MultiplyVec3f(impulse, 1.0f / rbA->mass));
+        rbB->velocity = HMM_AddVec3(rbB->velocity, HMM_MultiplyVec3f(impulse, 1.0f / rbB->mass));
     } else if (rbA && !aStatic) {
-        // A is dynamic, B is static - reflect A's velocity
+        // A is dynamic, B is static - stop velocity along collision normal
         float velocityAlongNormal = HMM_DotVec3(rbA->velocity, info.normal);
+        
+        // Only correct if moving INTO the static object (downward for ground)
         if (velocityAlongNormal < 0.0f) {
-            hmm_vec3 reflection = HMM_MultiplyVec3f(info.normal, velocityAlongNormal * (1.0f + rbA->bounciness));
-            rbA->velocity = HMM_SubtractVec3(rbA->velocity, reflection);
+            // FIXED: Stop all downward velocity (set Y component to 0 for ground collision)
+            if (fabsf(info.normal.Y) > 0.9f) {  // Ground plane (normal mostly vertical)
+                rbA->velocity.Y = 0.0f;  // Stop falling
+                printf("Stopped downward velocity\n");
+            } else {
+                // General case: reflect velocity
+                hmm_vec3 normalVelocity = HMM_MultiplyVec3f(info.normal, velocityAlongNormal);
+                rbA->velocity = HMM_SubtractVec3(rbA->velocity, HMM_MultiplyVec3f(normalVelocity, 1.0f + rbA->bounciness));
+            }
         }
     } else if (rbB && !bStatic) {
-        // B is dynamic, A is static - reflect B's velocity
+        // B is dynamic, A is static
         float velocityAlongNormal = HMM_DotVec3(rbB->velocity, info.normal);
+        
+        // Only correct if moving INTO the static object
         if (velocityAlongNormal > 0.0f) {
-            hmm_vec3 reflection = HMM_MultiplyVec3f(info.normal, velocityAlongNormal * (1.0f + rbB->bounciness));
-            rbB->velocity = HMM_AddVec3(rbB->velocity, reflection);
+            hmm_vec3 normalVelocity = HMM_MultiplyVec3f(info.normal, velocityAlongNormal);
+            rbB->velocity = HMM_SubtractVec3(rbB->velocity, HMM_MultiplyVec3f(normalVelocity, 1.0f + rbB->bounciness));
         }
     }
 }
@@ -557,18 +609,402 @@ EntityId ECS::RaycastSelection(const hmm_vec3& rayOrigin, const hmm_vec3& rayDir
 hmm_vec3 ECS::GetPlacementPosition(const hmm_vec3& rayOrigin, const hmm_vec3& rayDir, float distance) {
     // Default: place at fixed distance along ray
     hmm_vec3 placementPos = HMM_AddVec3(rayOrigin, HMM_MultiplyVec3f(rayDir, distance));
+    float closestT = distance;
+    bool foundHit = false;
     
-    // Try to snap to ground (Y = 0) or existing colliders
-    float bestT = distance;
-    
-    // Check ground plane intersection (Y = 0)
-    if (fabsf(rayDir.Y) > 0.001f) {
-        float t = -rayOrigin.Y / rayDir.Y;
-        if (t > 0.0f && t < bestT) {
-            bestT = t;
-            placementPos = HMM_AddVec3(rayOrigin, HMM_MultiplyVec3f(rayDir, t));
+    // Raycast against all selectable entities (including ground)
+    for (const auto& [id, selectable] : selectables_) {
+        Transform* t = GetTransform(id);
+        if (!t) continue;
+        
+        // Get world position (accounting for origin offset)
+        hmm_vec3 entityPos = t->GetWorldPosition();
+        
+        // Sphere intersection test (using bounding radius)
+        hmm_vec3 oc = HMM_SubtractVec3(rayOrigin, entityPos);
+        float a = HMM_DotVec3(rayDir, rayDir);
+        float b = 2.0f * HMM_DotVec3(oc, rayDir);
+        float c = HMM_DotVec3(oc, oc) - selectable.boundingRadius * selectable.boundingRadius;
+        float discriminant = b * b - 4 * a * c;
+        
+        if (discriminant >= 0.0f) {
+            float t1 = (-b - sqrtf(discriminant)) / (2.0f * a);
+            if (t1 > 0.001f && t1 < closestT) {
+                closestT = t1;
+                foundHit = true;
+            }
         }
     }
     
+    // If we hit something, place at that point (slightly above the surface)
+    if (foundHit) {
+        placementPos = HMM_AddVec3(rayOrigin, HMM_MultiplyVec3f(rayDir, closestT));
+        // Offset slightly along the ray to place above the surface
+        placementPos = HMM_AddVec3(placementPos, HMM_MultiplyVec3f(rayDir, 0.1f));
+    }
+    
     return placementPos;
+}
+
+// ============================================================================
+// NEW RAYCAST SYSTEM IMPLEMENTATION
+// ============================================================================
+
+void ECS::CreatePlaneCollider(EntityId entity, const hmm_vec3& normal, float distance) {
+    Collider collider;
+    collider.type = ColliderType::Plane;
+    collider.planeNormal = normal;
+    collider.planeDistance = distance;
+    collider.isStatic = true;
+    collider.useBroadPhase = false;  // Infinite planes don't need broad phase
+    
+    AddCollider(entity, collider);
+    printf("Created plane collider: normal=(%.2f, %.2f, %.2f), distance=%.2f\n",
+           normal.X, normal.Y, normal.Z, distance);
+}
+
+void ECS::CreateMeshCollider(EntityId entity, const Model3D& model) {
+    Collider collider;
+    collider.type = ColliderType::Mesh;
+    collider.isStatic = true;
+    
+    collider.triangles.reserve(model.index_count / 3);
+    
+    hmm_vec3 boundsMin = HMM_Vec3(FLT_MAX, FLT_MAX, FLT_MAX);
+    hmm_vec3 boundsMax = HMM_Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+    
+    for (int i = 0; i < model.index_count; i += 3) {
+        CollisionTriangle tri;
+        
+        Vertex& v0 = model.vertices[model.indices[i + 0]];
+        Vertex& v1 = model.vertices[model.indices[i + 1]];
+        Vertex& v2 = model.vertices[model.indices[i + 2]];
+        
+        tri.v0 = HMM_Vec3(v0.pos[0], v0.pos[1], v0.pos[2]);
+        tri.v1 = HMM_Vec3(v1.pos[0], v1.pos[1], v1.pos[2]);
+        tri.v2 = HMM_Vec3(v2.pos[0], v2.pos[1], v2.pos[2]);
+        
+        hmm_vec3 edge1 = HMM_SubtractVec3(tri.v1, tri.v0);
+        hmm_vec3 edge2 = HMM_SubtractVec3(tri.v2, tri.v0);
+        tri.normal = HMM_NormalizeVec3(HMM_Cross(edge1, edge2));
+        
+        collider.triangles.push_back(tri);
+        
+        boundsMin = HMM_Vec3(
+            fminf(boundsMin.X, fminf(tri.v0.X, fminf(tri.v1.X, tri.v2.X))),
+            fminf(boundsMin.Y, fminf(tri.v0.Y, fminf(tri.v1.Y, tri.v2.Y))),
+            fminf(boundsMin.Z, fminf(tri.v0.Z, fminf(tri.v1.Z, tri.v2.Z)))
+        );
+        boundsMax = HMM_Vec3(
+            fmaxf(boundsMax.X, fmaxf(tri.v0.X, fmaxf(tri.v1.X, tri.v2.X))),
+            fmaxf(boundsMax.Y, fmaxf(tri.v0.Y, fmaxf(tri.v1.Y, tri.v2.Y))),
+            fmaxf(boundsMax.Z, fmaxf(tri.v0.Z, fmaxf(tri.v1.Z, tri.v2.Z)))
+        );
+    }
+    
+    collider.meshBoundsMin = boundsMin;
+    collider.meshBoundsMax = boundsMax;
+    
+    AddCollider(entity, collider);
+    
+    printf("Created mesh collider: %zu triangles, bounds: [%.1f, %.1f, %.1f] to [%.1f, %.1f, %.1f]\n",
+           collider.triangles.size(),
+           boundsMin.X, boundsMin.Y, boundsMin.Z,
+           boundsMax.X, boundsMax.Y, boundsMax.Z);
+}
+
+bool ECS::RayTriangleIntersect(const hmm_vec3& rayOrigin, const hmm_vec3& rayDir,
+                               const CollisionTriangle& tri, float* outDistance, hmm_vec3* outPoint) {
+    const float EPSILON = 0.0000001f;
+    
+    hmm_vec3 edge1 = HMM_SubtractVec3(tri.v1, tri.v0);
+    hmm_vec3 edge2 = HMM_SubtractVec3(tri.v2, tri.v0);
+    hmm_vec3 h = HMM_Cross(rayDir, edge2);
+    float a = HMM_DotVec3(edge1, h);
+    
+    if (a > -EPSILON && a < EPSILON) {
+        return false;
+    }
+    
+    float f = 1.0f / a;
+    hmm_vec3 s = HMM_SubtractVec3(rayOrigin, tri.v0);
+    float u = f * HMM_DotVec3(s, h);
+    
+    if (u < 0.0f || u > 1.0f) {
+        return false;
+    }
+    
+    hmm_vec3 q = HMM_Cross(s, edge1);
+    float v = f * HMM_DotVec3(rayDir, q);
+    
+    if (v < 0.0f || u + v > 1.0f) {
+        return false;
+    }
+    
+    float t = f * HMM_DotVec3(edge2, q);
+    
+    if (t > EPSILON) {
+        if (outDistance) *outDistance = t;
+        if (outPoint) *outPoint = HMM_AddVec3(rayOrigin, HMM_MultiplyVec3f(rayDir, t));
+        return true;
+    }
+    
+    return false;
+}
+
+RaycastHit ECS::RayMeshIntersect(EntityId entity, const hmm_vec3& rayOrigin, 
+                                 const hmm_vec3& rayDir, float maxDistance) {
+    RaycastHit hit;
+    hit.distance = maxDistance;
+    
+    Collider* collider = GetCollider(entity);
+    Transform* transform = GetTransform(entity);
+    
+    if (!collider || collider->type != ColliderType::Mesh || !transform) {
+        return hit;
+    }
+    
+    // NOTE: For now, assume mesh is not transformed (world space triangles)
+    // This works for static ground meshes at the origin
+    // For rotated/scaled meshes, we'd need proper matrix inverse
+    
+    // Check all triangles (already in world space)
+    for (size_t i = 0; i < collider->triangles.size(); ++i) {
+        // Transform triangle vertices to world space
+        hmm_mat4 modelMatrix = transform->ModelMatrix();
+        
+        // Transform vertices
+        hmm_vec4 v0_4 = HMM_MultiplyMat4ByVec4(modelMatrix, HMM_Vec4(collider->triangles[i].v0.X, collider->triangles[i].v0.Y, collider->triangles[i].v0.Z, 1.0f));
+        hmm_vec4 v1_4 = HMM_MultiplyMat4ByVec4(modelMatrix, HMM_Vec4(collider->triangles[i].v1.X, collider->triangles[i].v1.Y, collider->triangles[i].v1.Z, 1.0f));
+        hmm_vec4 v2_4 = HMM_MultiplyMat4ByVec4(modelMatrix, HMM_Vec4(collider->triangles[i].v2.X, collider->triangles[i].v2.Y, collider->triangles[i].v2.Z, 1.0f));
+        
+        CollisionTriangle worldTri;
+        worldTri.v0 = HMM_Vec3(v0_4.X, v0_4.Y, v0_4.Z);
+        worldTri.v1 = HMM_Vec3(v1_4.X, v1_4.Y, v1_4.Z);
+        worldTri.v2 = HMM_Vec3(v2_4.X, v2_4.Y, v2_4.Z);
+        
+        // Recalculate normal in world space
+        hmm_vec3 edge1 = HMM_SubtractVec3(worldTri.v1, worldTri.v0);
+        hmm_vec3 edge2 = HMM_SubtractVec3(worldTri.v2, worldTri.v0);
+        worldTri.normal = HMM_NormalizeVec3(HMM_Cross(edge1, edge2));
+        
+        float dist;
+        hmm_vec3 point;
+        
+        if (RayTriangleIntersect(rayOrigin, rayDir, worldTri, &dist, &point)) {
+            if (dist < hit.distance) {
+                hit.hit = true;
+                hit.entity = entity;
+                hit.distance = dist;
+                hit.triangleIndex = (int)i;
+                hit.normal = worldTri.normal;
+                hit.point = point;
+            }
+        }
+    }
+    
+    return hit;
+}
+
+RaycastHit ECS::RaycastPhysics(const hmm_vec3& origin, const hmm_vec3& direction, 
+                               float maxDistance, uint32_t layerMask) {
+    RaycastHit closestHit;
+    closestHit.distance = maxDistance;
+    
+    for (const auto& [entityId, collider] : colliders_) {
+        // Layer filtering
+        if ((collider.collisionLayer & layerMask) == 0) {
+            continue;
+        }
+        
+        Transform* t = GetTransform(entityId);
+        if (!t) continue;
+        
+        RaycastHit hit;
+        
+        switch (collider.type) {
+            case ColliderType::Plane: {
+                float denom = HMM_DotVec3(direction, collider.planeNormal);
+                if (fabsf(denom) > 0.0001f) {
+                    float t_param = (collider.planeDistance - HMM_DotVec3(origin, collider.planeNormal)) / denom;
+                    if (t_param >= 0.0f && t_param < closestHit.distance) {
+                        hit.hit = true;
+                        hit.entity = entityId;
+                        hit.point = HMM_AddVec3(origin, HMM_MultiplyVec3f(direction, t_param));
+                        hit.normal = collider.planeNormal;
+                        hit.distance = t_param;
+                        closestHit = hit;
+                    }
+                }
+                break;
+            }
+            
+            case ColliderType::Mesh: {
+                hit = RayMeshIntersect(entityId, origin, direction, closestHit.distance);
+                if (hit.hit && hit.distance < closestHit.distance) {
+                    closestHit = hit;
+                }
+                break;
+            }
+            
+            case ColliderType::Sphere: {
+                hmm_vec3 oc = HMM_SubtractVec3(origin, t->GetWorldPosition());
+                float a = HMM_DotVec3(direction, direction);
+                float b = 2.0f * HMM_DotVec3(oc, direction);
+                float c = HMM_DotVec3(oc, oc) - collider.radius * collider.radius;
+                float discriminant = b * b - 4 * a * c;
+                
+                if (discriminant >= 0.0f) {
+                    float t1 = (-b - sqrtf(discriminant)) / (2.0f * a);
+                    if (t1 > 0.001f && t1 < closestHit.distance) {
+                        hit.hit = true;
+                        hit.entity = entityId;
+                        hit.distance = t1;
+                        hit.point = HMM_AddVec3(origin, HMM_MultiplyVec3f(direction, t1));
+                        hit.normal = HMM_NormalizeVec3(HMM_SubtractVec3(hit.point, t->GetWorldPosition()));
+                        closestHit = hit;
+                    }
+                }
+                break;
+            }
+            
+            default:
+                break;
+        }
+    }
+    
+    return closestHit;
+}
+
+// Add this helper function before RaycastSelectionNew
+bool ECS::RayBoxIntersect(const hmm_vec3& rayOrigin, const hmm_vec3& rayDir,
+                          const hmm_vec3& boxMin, const hmm_vec3& boxMax,
+                          float* outDistance) {
+    // AABB (Axis-Aligned Bounding Box) ray intersection using slab method
+    hmm_vec3 invDir = HMM_Vec3(1.0f / rayDir.X, 1.0f / rayDir.Y, 1.0f / rayDir.Z);
+    
+    float t1 = (boxMin.X - rayOrigin.X) * invDir.X;
+    float t2 = (boxMax.X - rayOrigin.X) * invDir.X;
+    float t3 = (boxMin.Y - rayOrigin.Y) * invDir.Y;
+    float t4 = (boxMax.Y - rayOrigin.Y) * invDir.Y;
+    float t5 = (boxMin.Z - rayOrigin.Z) * invDir.Z;
+    float t6 = (boxMax.Z - rayOrigin.Z) * invDir.Z;
+    
+    float tmin = fmaxf(fmaxf(fminf(t1, t2), fminf(t3, t4)), fminf(t5, t6));
+    float tmax = fminf(fminf(fmaxf(t1, t2), fmaxf(t3, t4)), fmaxf(t5, t6));
+    
+    // If tmax < 0, ray is intersecting AABB, but the whole AABB is behind us
+    if (tmax < 0.0f) {
+        return false;
+    }
+    
+    // If tmin > tmax, ray doesn't intersect AABB
+    if (tmin > tmax) {
+        return false;
+    }
+    
+    // If tmin < 0, we are inside the box, use tmax instead
+    float t = (tmin < 0.0f) ? tmax : tmin;
+    
+    if (outDistance) {
+        *outDistance = t;
+    }
+    
+    return true;
+}
+
+RaycastHit ECS::RaycastSelectionNew(const hmm_vec3& origin, const hmm_vec3& direction,
+                                    float maxDistance) {
+    RaycastHit closestHit;
+    closestHit.distance = maxDistance;
+    
+    for (const auto& [entityId, selectable] : selectables_) {
+        if (!selectable.canBeSelected) continue;
+        
+        Transform* t = GetTransform(entityId);
+        if (!t) continue;
+        
+        RaycastHit hit;
+        
+        switch (selectable.volumeType) {
+            case SelectionVolumeType::Sphere: {
+                hmm_vec3 oc = HMM_SubtractVec3(origin, t->GetWorldPosition());
+                float a = HMM_DotVec3(direction, direction);
+                float b = 2.0f * HMM_DotVec3(oc, direction);
+                float c = HMM_DotVec3(oc, oc) - selectable.boundingSphereRadius * selectable.boundingSphereRadius;
+                float discriminant = b * b - 4 * a * c;
+                
+                if (discriminant >= 0.0f) {
+                    float t1 = (-b - sqrtf(discriminant)) / (2.0f * a);
+                    if (t1 > 0.001f && t1 < closestHit.distance) {
+                        hit.hit = true;
+                        hit.entity = entityId;
+                        hit.distance = t1;
+                        hit.point = HMM_AddVec3(origin, HMM_MultiplyVec3f(direction, t1));
+                        hit.normal = HMM_NormalizeVec3(HMM_SubtractVec3(hit.point, t->GetWorldPosition()));
+                        closestHit = hit;
+                    }
+                }
+                break;
+            }
+            
+            case SelectionVolumeType::Box: {
+                // ADDED: Box selection volume support
+                // Transform box bounds to world space
+                hmm_vec3 worldMin = HMM_AddVec3(t->position, selectable.boundingBoxMin);
+                hmm_vec3 worldMax = HMM_AddVec3(t->position, selectable.boundingBoxMax);
+                
+                float dist;
+                if (RayBoxIntersect(origin, direction, worldMin, worldMax, &dist)) {
+                    if (dist > 0.001f && dist < closestHit.distance) {
+                        hit.hit = true;
+                        hit.entity = entityId;
+                        hit.distance = dist;
+                        hit.point = HMM_AddVec3(origin, HMM_MultiplyVec3f(direction, dist));
+                        
+                        // Calculate normal based on which face was hit
+                        hmm_vec3 localPoint = HMM_SubtractVec3(hit.point, t->position);
+                        hmm_vec3 center = HMM_MultiplyVec3f(HMM_AddVec3(selectable.boundingBoxMin, selectable.boundingBoxMax), 0.5f);
+                        hmm_vec3 toPoint = HMM_SubtractVec3(localPoint, center);
+                        
+                        // Determine which axis has the largest component (which face)
+                        float absX = fabsf(toPoint.X);
+                        float absY = fabsf(toPoint.Y);
+                        float absZ = fabsf(toPoint.Z);
+                        
+                        if (absX > absY && absX > absZ) {
+                            hit.normal = HMM_Vec3(toPoint.X > 0 ? 1.0f : -1.0f, 0.0f, 0.0f);
+                        } else if (absY > absZ) {
+                            hit.normal = HMM_Vec3(0.0f, toPoint.Y > 0 ? 1.0f : -1.0f, 0.0f);
+                        } else {
+                            hit.normal = HMM_Vec3(0.0f, 0.0f, toPoint.Z > 0 ? 1.0f : -1.0f);
+                        }
+                        
+                        closestHit = hit;
+                    }
+                }
+                break;
+            }
+            
+            case SelectionVolumeType::Mesh: {
+                if (selectable.useMeshColliderForPicking) {
+                    hit = RayMeshIntersect(entityId, origin, direction, closestHit.distance);
+                    if (hit.hit && hit.distance < closestHit.distance) {
+                        closestHit = hit;
+                    }
+                }
+                break;
+            }
+            
+            default:
+                break;
+        }
+    }
+    
+    return closestHit;
+}
+RaycastHit ECS::RaycastPlacement(const hmm_vec3 &origin, const hmm_vec3 &direction,
+        float maxDistance) {
+    // Use physics raycast for placement (checks colliders)
+    return RaycastPhysics(origin, direction, maxDistance);
 }

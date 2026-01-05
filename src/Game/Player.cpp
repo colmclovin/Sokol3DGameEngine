@@ -28,10 +28,23 @@ void PlayerController::Spawn(const hmm_vec3& pos) {
     t.position = pos;
     t.yaw = 0.0f;
     ecs_.AddTransform(entityId_, t);
+    
     Rigidbody rb;
     rb.mass = 1.0f;
-    rb.affectedByGravity = true;
+    rb.affectedByGravity = true;  // Player affected by gravity
+    rb.drag = 0.1f;  // Some air resistance
+    rb.bounciness = 0.0f;  // Don't bounce
+    rb.isKinematic = false;  // Affected by physics
     ecs_.AddRigidbody(entityId_, rb);
+    
+    // ADDED: Player collider (capsule-like sphere for now)
+    Collider playerCollider;
+    playerCollider.type = ColliderType::Sphere;
+    playerCollider.radius = 0.5f;  // Player body radius
+    playerCollider.isStatic = false;
+    playerCollider.isTrigger = false;
+    ecs_.AddCollider(entityId_, playerCollider);
+    
     // Create render instance
     ecs_.AddRenderable(entityId_, meshId_, renderer_);
     
@@ -60,9 +73,13 @@ void PlayerController::HandleEvent(const sapp_event* ev) {
                 }
             }
             
-            // Spacebar = up in Edit mode
-            if (ev->key_code == SAPP_KEYCODE_SPACE && gameState_.IsEdit()) {
-                up_ = true;
+            // CHANGED: Spacebar = jump in Playing mode, up in Edit mode
+            if (ev->key_code == SAPP_KEYCODE_SPACE) {
+                if (gameState_.IsEdit()) {
+                    up_ = true;
+                } else {
+                    jump_ = true;  // Jump in playing mode
+                }
             }
             
             if (ev->key_code == SAPP_KEYCODE_ESCAPE) {
@@ -137,15 +154,17 @@ void PlayerController::HandleEvent(const sapp_event* ev) {
             
             // Handle spacebar up
             if (ev->key_code == SAPP_KEYCODE_SPACE) {
+                jump_ = false;  // CHANGED: Reset jump flag
                 up_ = false;
             }
             break;
         case SAPP_EVENTTYPE_MOUSE_MOVE:
             {
                 // Mouse movement always controls camera rotation
+                // CHANGED: Pass game state to allow conditional pitch clamping
                 float dx = (float)ev->mouse_dx;
                 float dy = (float)ev->mouse_dy;
-                camera_.ProcessMouseMovement(dx, dy);
+                camera_.ProcessMouseMovement(dx, dy, &gameState_);
             }
             break;
         case SAPP_EVENTTYPE_MOUSE_SCROLL:
@@ -162,25 +181,54 @@ void PlayerController::Update(float dt) {
     if (!inputEnabled_) return; // Skip update if input disabled
     
     Transform* t = ecs_.GetTransform(entityId_);
+    Rigidbody* rb = ecs_.GetRigidbody(entityId_);
+    
     if (!t) {
         printf("ERROR: No transform found for player entity!\n");
         return;
     }
     
     if (gameState_.IsPlaying()) {
-        // PLAYING MODE: Move player, camera follows
+        // PLAYING MODE: Move player with physics, camera follows
+        
+        // ADDED: Check if grounded (simple check: Y position near ground level)
+        isGrounded_ = (t->position.Y <= -3.5f);  // Ground is at Y=-4, player radius is 0.5
+        
+        // ADDED: Handle jump
+        if (jump_ && isGrounded_ && rb) {
+            rb->velocity.Y = jumpForce_;  // Apply upward velocity
+            jump_ = false;  // Consume jump input
+            printf("Player jumped!\n");
+        }
+        
+        // Horizontal movement (doesn't affect vertical velocity)
         hmm_vec3 forward_dir = camera_.GetForwardDirection();
         hmm_vec3 right_dir = camera_.GetRightDirection();
         float speed = moveSpeed_ * (sprint_ ? 2.0f : 1.0f);
-        hmm_vec3 delta = HMM_Vec3(0.0f, 0.0f, 0.0f);
         
-        // FIXED: Corrected direction signs for proper left/right movement
-        if (forward_)  delta = HMM_AddVec3(delta, HMM_Vec3(forward_dir.X * speed * dt, forward_dir.Y * speed * dt, forward_dir.Z * speed * dt));
-        if (back_)     delta = HMM_AddVec3(delta, HMM_Vec3(-forward_dir.X * speed * dt, -forward_dir.Y * speed * dt, -forward_dir.Z * speed * dt));
-        if (left_)     delta = HMM_AddVec3(delta, HMM_Vec3(-right_dir.X * speed * dt, -right_dir.Y * speed * dt, -right_dir.Z * speed * dt)); // FIXED: Changed + to -
-        if (right_)    delta = HMM_AddVec3(delta, HMM_Vec3(right_dir.X * speed * dt, right_dir.Y * speed * dt, right_dir.Z * speed * dt));     // FIXED: Changed - to +
+        // CHANGED: Apply movement as velocity change (not direct position change)
+        // This allows physics/collision to handle the actual movement
+        hmm_vec3 moveDir = HMM_Vec3(0.0f, 0.0f, 0.0f);
+        if (forward_)  moveDir = HMM_AddVec3(moveDir, forward_dir);
+        if (back_)     moveDir = HMM_SubtractVec3(moveDir, forward_dir);
+        if (left_)     moveDir = HMM_SubtractVec3(moveDir, right_dir);
+        if (right_)    moveDir = HMM_AddVec3(moveDir, right_dir);
         
-        t->position = HMM_AddVec3(t->position, delta);
+        // Normalize movement direction
+        float len = sqrtf(moveDir.X * moveDir.X + moveDir.Z * moveDir.Z);
+        if (len > 0.001f) {
+            moveDir.X /= len;
+            moveDir.Z /= len;
+        }
+        
+        // Apply horizontal velocity (preserve Y velocity for jumping/falling)
+        if (rb) {
+            rb->velocity.X = moveDir.X * speed;
+            rb->velocity.Z = moveDir.Z * speed;
+        } else {
+            // Fallback: direct position update if no rigidbody
+            t->position = HMM_AddVec3(t->position, HMM_MultiplyVec3f(moveDir, speed * dt));
+        }
 
         // FIXED: Invert camera yaw for player rotation to face the correct direction
         float targetYaw = -camera_.GetYaw(); // Added negative sign
@@ -188,6 +236,7 @@ void PlayerController::Update(float dt) {
         
         // Convert radians to degrees for the transform (HMM_Rotate expects degrees)
         t->yaw = modelYaw_ * (180.0f / 3.14159265359f);
+        
     } else {
         // EDIT MODE: Move camera freely, player stays still
         camera_.UpdateFreeCamera(dt, forward_, back_, left_, right_, up_, down_, sprint_);

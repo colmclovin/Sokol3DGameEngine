@@ -3,25 +3,39 @@
 #include "../../External/HandmadeMath.h"
 #include "../Renderer/Renderer.h"
 #include "Components.h"
-#include "../../include/Model.h" // Include for Light struct definition
+#include "../../include/Model.h"
 #include <unordered_map>
 #include <vector>
 #include <optional>
 
-// Lightweight data-driven ECS (sparse maps per component).
-// Not a high-performance packed ECS, but simple and clear to extend.
-
 using EntityId = int;
 
-// Collision info structure
+// ============================================================================
+// RAYCAST HIT RESULT - Declared BEFORE ECS class
+// ============================================================================
+struct RaycastHit {
+    bool hit = false;
+    EntityId entity = -1;
+    hmm_vec3 point{0.0f, 0.0f, 0.0f};
+    hmm_vec3 normal{0.0f, 1.0f, 0.0f};
+    float distance = 0.0f;
+    int triangleIndex = -1;
+};
+
+// ============================================================================
+// COLLISION INFO - Declared BEFORE ECS class
+// ============================================================================
 struct CollisionInfo {
     EntityId entityA;
     EntityId entityB;
-    hmm_vec3 normal;      // Collision normal (from A to B)
-    float penetration;    // How deep the collision is
-    hmm_vec3 contactPoint; // Point of contact
+    hmm_vec3 normal;
+    float penetration;
+    hmm_vec3 contactPoint;
 };
 
+// ============================================================================
+// ECS CLASS
+// ============================================================================
 class ECS {
 public:
     ECS();
@@ -66,38 +80,57 @@ public:
     bool HasSelectable(EntityId id) const;
 
     // Rendering linkage
-    // Adds a renderable component (meshId) and creates instance via renderer.
-    // Returns instance id or -1 on failure.
     int AddRenderable(EntityId id, int meshId, Renderer& renderer);
     bool HasRenderable(EntityId id) const;
     int GetInstanceId(EntityId id) const;
     int GetMeshId(EntityId id) const;
     void RemoveRenderable(EntityId id, Renderer& renderer);
 
-    // Systems (data-driven)
+    // Systems
     void UpdateAI(float dt);
     void UpdatePhysics(float dt);
     void UpdateAnimation(float dt);
     void UpdateBillboards(const hmm_vec3& cameraPosition);
     void UpdateScreenSpace(float screenWidth, float screenHeight);
-    
-    // Collision detection
     void UpdateCollisions(float dt);
     bool CheckCollision(EntityId a, EntityId b, CollisionInfo* outInfo = nullptr);
 
-    // Selection system
-    EntityId RaycastSelection(const hmm_vec3& rayOrigin, const hmm_vec3& rayDir, float maxDistance = 1000.0f);
+    // ========================================================================
+    // NEW RAYCAST SYSTEM
+    // ========================================================================
     
-    // Placement system for edit mode
+    // Physics raycast (checks colliders only)
+    RaycastHit RaycastPhysics(const hmm_vec3& origin, const hmm_vec3& direction, 
+                              float maxDistance = 1000.0f, uint32_t layerMask = 0xFFFFFFFF);
+    
+    // Selection raycast (checks selectables) - NEW VERSION
+    RaycastHit RaycastSelectionNew(const hmm_vec3& origin, const hmm_vec3& direction,
+                                   float maxDistance = 1000.0f);
+    
+    // Placement raycast (finds surface for entity placement)
+    RaycastHit RaycastPlacement(const hmm_vec3& origin, const hmm_vec3& direction,
+                                float maxDistance = 1000.0f);
+    
+    // ========================================================================
+    // COLLIDER CREATION HELPERS
+    // ========================================================================
+    
+    // Create mesh collider from model data
+    void CreateMeshCollider(EntityId entity, const Model3D& model);
+    
+    // Create plane collider (infinite ground)
+    void CreatePlaneCollider(EntityId entity, const hmm_vec3& normal, float distance);
+    
+    // ========================================================================
+    // LEGACY COMPATIBILITY (kept for existing code)
+    // ========================================================================
+    
+    EntityId RaycastSelection(const hmm_vec3& rayOrigin, const hmm_vec3& rayDir, float maxDistance = 1000.0f);
     hmm_vec3 GetPlacementPosition(const hmm_vec3& rayOrigin, const hmm_vec3& rayDir, float distance = 10.0f);
 
-    // Sync transforms to renderer (call after systems)
+    // Sync transforms to renderer
     void SyncToRenderer(Renderer& renderer);
-    
-    // Get all screen-space entities for separate rendering
     std::vector<EntityId> GetScreenSpaceEntities() const;
-
-    // Iterate helper
     std::vector<EntityId> AllEntities() const;
 
     const std::unordered_map<EntityId, Light>& GetLights() const { return lights_; }
@@ -119,12 +152,25 @@ private:
     std::unordered_map<EntityId, Light> lights_;
     std::unordered_map<EntityId, Selectable> selectables_;
 
-    // rendering maps
     std::unordered_map<EntityId, int> mesh_for_entity_;
     std::unordered_map<EntityId, int> instance_for_entity_;
     
     // Collision helpers
     bool SphereVsSphere(const hmm_vec3& posA, float radiusA, const hmm_vec3& posB, float radiusB, CollisionInfo* outInfo);
     bool SphereVsBox(const hmm_vec3& spherePos, float radius, const hmm_vec3& boxPos, const hmm_vec3& boxHalfExtents, CollisionInfo* outInfo);
+    bool SphereVsPlane(const hmm_vec3& spherePos, float radius, const hmm_vec3& planeNormal, float planeDistance, CollisionInfo* outInfo);  // ADDED
     void ResolveCollision(EntityId a, EntityId b, const CollisionInfo& info);
+    
+    // NEW: Ray-triangle intersection
+    bool RayTriangleIntersect(const hmm_vec3& rayOrigin, const hmm_vec3& rayDir,
+                             const CollisionTriangle& tri, float* outDistance, hmm_vec3* outPoint);
+    
+    // NEW: Ray-mesh intersection
+    RaycastHit RayMeshIntersect(EntityId entity, const hmm_vec3& rayOrigin, 
+                                const hmm_vec3& rayDir, float maxDistance);
+    
+    // ADDED: Ray-box intersection (for AABB selection volumes)
+    bool RayBoxIntersect(const hmm_vec3& rayOrigin, const hmm_vec3& rayDir,
+                        const hmm_vec3& boxMin, const hmm_vec3& boxMax,
+                        float* outDistance);
 };

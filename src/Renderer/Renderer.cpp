@@ -21,6 +21,9 @@ Renderer::Renderer() noexcept
     , pip_3d_no_depth_()
     , pip_2d_()
     , pip_2d_no_depth_()
+    , pip_3d_lit_()
+    , pip_3d_lines_()
+    , pip_3d_lines_no_depth_()  // ADDED
     , default_texture_()
     , texture_sampler_()
     , next_mesh_id_(1)
@@ -34,7 +37,9 @@ Renderer::Renderer() noexcept
     pip_3d_no_depth_.id = SG_INVALID_ID;
     pip_2d_.id = SG_INVALID_ID;
     pip_2d_no_depth_.id = SG_INVALID_ID;
-    default_texture_.id = SG_INVALID_ID;
+    pip_3d_lit_.id = SG_INVALID_ID;
+    pip_3d_lines_.id = SG_INVALID_ID;
+    pip_3d_lines_no_depth_.id = SG_INVALID_ID;  // ADDED
     texture_sampler_.id = SG_INVALID_ID;
 
     memset(&bind_, 0, sizeof(bind_));
@@ -206,6 +211,22 @@ bool Renderer::Init() {
     pip_lit_desc.shader = sg_make_shader(Shader3DLit_shader_desc(sg_query_backend()));
     pip_3d_lit_ = sg_make_pipeline(&pip_lit_desc);
 
+    // Create 3D line pipeline (for wireframes)
+    printf("Creating line rendering pipeline...\n");
+    sg_pipeline_desc pip_lines_desc = pip_desc;
+    pip_lines_desc.shader = shader_3d;
+    pip_lines_desc.primitive_type = SG_PRIMITIVETYPE_LINES;
+    pip_lines_desc.depth.compare = SG_COMPAREFUNC_LESS_EQUAL;  // Normal depth testing
+    pip_lines_desc.depth.write_enabled = false;  // Don't write depth
+    pip_3d_lines_ = sg_make_pipeline(&pip_lines_desc);
+    
+    // ADDED: Create 3D line pipeline for gizmos (NO depth test - always on top)
+    printf("Creating gizmo line rendering pipeline (no depth test)...\n");
+    sg_pipeline_desc pip_gizmo_desc = pip_lines_desc;
+    pip_gizmo_desc.depth.compare = SG_COMPAREFUNC_ALWAYS;  // Always pass depth test
+    pip_gizmo_desc.depth.write_enabled = false;  // Don't write depth
+    pip_3d_lines_no_depth_ = sg_make_pipeline(&pip_gizmo_desc);
+
     // Initialize lighting params
     fs_params_ = {};
     fs_params_.ambient_data = HMM_Vec4(0.3f, 0.3f, 0.4f, 0.2f); // ambient color + intensity
@@ -236,6 +257,8 @@ int Renderer::AddMesh(const Model3D& mesh) {
     meta.vertex_count = mesh.vertex_count;
     meta.index_count = mesh.index_count;
     meta.has_texture = mesh.has_texture;
+    meta.is_wireframe = false;
+    meta.is_gizmo = false;  // ADDED
     
     // Create texture if provided
     if (mesh.has_texture && mesh.texture_data) {
@@ -406,7 +429,7 @@ void Renderer::render_instances(const hmm_mat4& view_proj, const std::set<int>& 
 }
 
 void Renderer::Render(const hmm_mat4& view_proj) {
-    sg_apply_pipeline(pip_3d_lit_);  // Use lit shader instead of pip_3d_
+    sg_apply_pipeline(pip_3d_lit_);
     
     // Apply vertex shader uniforms
     sg_apply_uniforms(UB_vs_params, SG_RANGE(vs_params_));
@@ -414,7 +437,78 @@ void Renderer::Render(const hmm_mat4& view_proj) {
     // Apply fragment shader params for lighting (UB_fs_params is slot 1)
     sg_apply_uniforms(UB_fs_params, SG_RANGE(fs_params_));
     
-    render_instances(view_proj, screenSpaceInstances_, true, false);
+    // CHANGED: Exclude screen-space instances AND wireframe meshes
+    // Group instances by mesh, excluding screen-space and wireframe meshes
+    mesh_instances_cache_.clear();
+    
+    for (size_t i = 0; i < instances_.size(); ++i) {
+        if (!instances_[i].active) continue;
+        
+        bool isScreenSpace = (screenSpaceInstances_.find((int)i) != screenSpaceInstances_.end());
+        if (isScreenSpace) continue;  // Skip screen-space instances
+        
+        // ADDED: Skip wireframe meshes
+        int meshId = instances_[i].mesh_id;
+        if (wireframeMeshes_.find(meshId) != wireframeMeshes_.end()) {
+            continue;  // Skip wireframe instances in main render
+        }
+        
+        const ModelInstance& inst = instances_[i];
+        mesh_instances_cache_[inst.mesh_id].push_back(inst.transform);
+    }
+
+    // Render all non-wireframe, non-screen-space meshes
+    for (auto& m : meshes_) {
+        const MeshMeta& meta = m.second;
+        
+        // Skip wireframe meshes in main render
+        if (meta.is_wireframe) continue;
+        
+        auto it = mesh_instances_cache_.find(meta.mesh_id);
+        if (it == mesh_instances_cache_.end()) continue;
+        
+        const std::vector<hmm_mat4>& instances_for_mesh = it->second;
+        int instance_count = (int)instances_for_mesh.size();
+        if (instance_count <= 0) continue;
+
+        // Get or create instance buffer with growth strategy
+        InstanceBufferInfo& buf_info = mesh_instance_bufs_[meta.mesh_id];
+        size_t needed_instances = instances_for_mesh.size();
+
+        if (buf_info.buffer.id == SG_INVALID_ID || buf_info.capacity < needed_instances) {
+            if (buf_info.buffer.id != SG_INVALID_ID) {
+                sg_destroy_buffer(buf_info.buffer);
+            }
+            
+            size_t new_capacity = needed_instances * 3 / 2;
+            if (new_capacity < 64) new_capacity = 64;
+            
+            sg_buffer_desc inst_desc = {};
+            inst_desc.usage = SG_USAGE_STREAM;
+            inst_desc.type = SG_BUFFERTYPE_VERTEXBUFFER;
+            inst_desc.size = (size_t)(new_capacity * sizeof(hmm_mat4));
+            buf_info.buffer = sg_make_buffer(&inst_desc);
+            buf_info.capacity = new_capacity;
+        }
+
+        const uint32_t data_size = (uint32_t)(instances_for_mesh.size() * sizeof(hmm_mat4));
+        sg_update_buffer(buf_info.buffer, { .ptr = instances_for_mesh.data(), .size = data_size });
+        
+        bind_.vertex_buffers[1] = buf_info.buffer;
+        sg_apply_bindings(&bind_);
+
+        vs_params_.mvp = view_proj;
+        vs_params_.is_screen_space = 0.0f;
+        sg_apply_uniforms(UB_vs_params, SG_RANGE(vs_params_));
+
+        if (meta.index_count > 0) {
+            sg_draw(meta.index_offset, meta.index_count, instance_count);
+        }
+
+        bind_.vertex_buffers[1] = inst_vbuf_;
+    }
+
+    sg_apply_bindings(&bind_);
 }
 
 void Renderer::RenderScreenSpace(const hmm_mat4& orthoProj) {
@@ -467,6 +561,17 @@ void Renderer::Cleanup() {
     if (pip_2d_.id != SG_INVALID_ID)  { sg_destroy_pipeline(pip_2d_); pip_2d_.id = SG_INVALID_ID; }
     if (pip_2d_no_depth_.id != SG_INVALID_ID) { sg_destroy_pipeline(pip_2d_no_depth_); pip_2d_no_depth_.id = SG_INVALID_ID; }
     
+    if (pip_3d_lines_.id != SG_INVALID_ID) { 
+        sg_destroy_pipeline(pip_3d_lines_); 
+        pip_3d_lines_.id = SG_INVALID_ID; 
+    }
+    
+    // ADDED
+    if (pip_3d_lines_no_depth_.id != SG_INVALID_ID) { 
+        sg_destroy_pipeline(pip_3d_lines_no_depth_); 
+        pip_3d_lines_no_depth_.id = SG_INVALID_ID; 
+    }
+    
     merged_vertices_.clear();
     merged_indices_.clear();
     meshes_.clear();
@@ -517,4 +622,187 @@ void Renderer::SetSunLight(const hmm_vec3& direction, const hmm_vec3& color, flo
     fs_params_.sun_color_misc.X = color.X;
     fs_params_.sun_color_misc.Y = color.Y;
     fs_params_.sun_color_misc.Z = color.Z;
+}
+
+void Renderer::MarkMeshAsWireframe(int meshId, bool isWireframe) {
+    auto it = meshes_.find(meshId);
+    if (it != meshes_.end()) {
+        it->second.is_wireframe = isWireframe;
+        if (isWireframe) {
+            wireframeMeshes_.insert(meshId);
+            printf("Marked mesh %d as wireframe\n", meshId);
+        } else {
+            wireframeMeshes_.erase(meshId);
+        }
+    }
+}
+
+// ADDED: New method to mark mesh as gizmo
+void Renderer::MarkMeshAsGizmo(int meshId, bool isGizmo) {
+    auto it = meshes_.find(meshId);
+    if (it != meshes_.end()) {
+        it->second.is_gizmo = isGizmo;
+        if (isGizmo) {
+            gizmoMeshes_.insert(meshId);
+            // Gizmos are also wireframes
+            it->second.is_wireframe = true;
+            wireframeMeshes_.insert(meshId);
+            printf("Marked mesh %d as gizmo (renders on top)\n", meshId);
+        } else {
+            gizmoMeshes_.erase(meshId);
+        }
+    }
+}
+
+void Renderer::RenderWireframes(const hmm_mat4& view_proj) {
+    if (wireframeMeshes_.empty()) return;
+    
+    // Apply line rendering pipeline WITH depth testing
+    sg_apply_pipeline(pip_3d_lines_);
+    
+    // Build instance cache for wireframe meshes (excluding gizmos)
+    std::unordered_map<int, std::vector<hmm_mat4>> wireframe_cache;
+    
+    for (size_t i = 0; i < instances_.size(); ++i) {
+        if (!instances_[i].active) continue;
+        
+        int meshId = instances_[i].mesh_id;
+        
+        // Skip if not a wireframe mesh
+        if (wireframeMeshes_.find(meshId) == wireframeMeshes_.end()) {
+            continue;
+        }
+        
+        // ADDED: Skip gizmo meshes (they render separately)
+        if (gizmoMeshes_.find(meshId) != gizmoMeshes_.end()) {
+            continue;
+        }
+        
+        const ModelInstance& inst = instances_[i];
+        wireframe_cache[inst.mesh_id].push_back(inst.transform);
+    }
+    
+    // Render wireframe meshes (selection boxes) with depth testing
+    for (auto& m : meshes_) {
+        const MeshMeta& meta = m.second;
+        
+        if (!meta.is_wireframe || meta.is_gizmo) continue;  // CHANGED: Skip gizmos
+        
+        auto it = wireframe_cache.find(meta.mesh_id);
+        if (it == wireframe_cache.end() || it->second.empty()) continue;
+        
+        const std::vector<hmm_mat4>& instances_for_mesh = it->second;
+        int instance_count = (int)instances_for_mesh.size();
+        
+        // Get or create instance buffer
+        InstanceBufferInfo& buf_info = mesh_instance_bufs_[meta.mesh_id];
+        size_t needed_instances = instances_for_mesh.size();
+
+        if (buf_info.buffer.id == SG_INVALID_ID || buf_info.capacity < needed_instances) {
+            if (buf_info.buffer.id != SG_INVALID_ID) {
+                sg_destroy_buffer(buf_info.buffer);
+            }
+            
+            size_t new_capacity = needed_instances * 3 / 2;
+            if (new_capacity < 64) new_capacity = 64;
+            
+            sg_buffer_desc inst_desc = {};
+            inst_desc.usage = SG_USAGE_STREAM;
+            inst_desc.type = SG_BUFFERTYPE_VERTEXBUFFER;
+            inst_desc.size = (size_t)(new_capacity * sizeof(hmm_mat4));
+            buf_info.buffer = sg_make_buffer(&inst_desc);
+            buf_info.capacity = new_capacity;
+        }
+
+        const uint32_t data_size = (uint32_t)(instances_for_mesh.size() * sizeof(hmm_mat4));
+        sg_update_buffer(buf_info.buffer, { .ptr = instances_for_mesh.data(), .size = data_size });
+        
+        bind_.vertex_buffers[1] = buf_info.buffer;
+        sg_apply_bindings(&bind_);
+        
+        vs_params_.mvp = view_proj;
+        vs_params_.is_screen_space = 0.0f;
+        sg_apply_uniforms(UB_vs_params, SG_RANGE(vs_params_));
+        
+        if (meta.index_count > 0) {
+            sg_draw(meta.index_offset, meta.index_count, instance_count);
+        }
+    }
+    
+    bind_.vertex_buffers[1] = inst_vbuf_;
+    sg_apply_bindings(&bind_);
+}
+
+void Renderer::RenderGizmos(const hmm_mat4& view_proj) {
+    if (gizmoMeshes_.empty()) return;
+    
+    // Apply line rendering pipeline WITHOUT depth testing (always on top)
+    sg_apply_pipeline(pip_3d_lines_no_depth_);
+    
+    // Build instance cache for ONLY gizmo meshes
+    std::unordered_map<int, std::vector<hmm_mat4>> gizmo_cache;
+    
+    for (size_t i = 0; i < instances_.size(); ++i) {
+        if (!instances_[i].active) continue;
+        
+        int meshId = instances_[i].mesh_id;
+        
+        // Only include gizmo meshes
+        if (gizmoMeshes_.find(meshId) == gizmoMeshes_.end()) {
+            continue;
+        }
+        
+        const ModelInstance& inst = instances_[i];
+        gizmo_cache[inst.mesh_id].push_back(inst.transform);
+    }
+    
+    // Render gizmo meshes with no depth test (always visible)
+    for (auto& m : meshes_) {
+        const MeshMeta& meta = m.second;
+        
+        if (!meta.is_gizmo) continue;
+        
+        auto it = gizmo_cache.find(meta.mesh_id);
+        if (it == gizmo_cache.end() || it->second.empty()) continue;
+        
+        const std::vector<hmm_mat4>& instances_for_mesh = it->second;
+        int instance_count = (int)instances_for_mesh.size();
+        
+        // Get or create instance buffer
+        InstanceBufferInfo& buf_info = mesh_instance_bufs_[meta.mesh_id];
+        size_t needed_instances = instances_for_mesh.size();
+
+        if (buf_info.buffer.id == SG_INVALID_ID || buf_info.capacity < needed_instances) {
+            if (buf_info.buffer.id != SG_INVALID_ID) {
+                sg_destroy_buffer(buf_info.buffer);
+            }
+            
+            size_t new_capacity = needed_instances * 3 / 2;
+            if (new_capacity < 64) new_capacity = 64;
+            
+            sg_buffer_desc inst_desc = {};
+            inst_desc.usage = SG_USAGE_STREAM;
+            inst_desc.type = SG_BUFFERTYPE_VERTEXBUFFER;
+            inst_desc.size = (size_t)(new_capacity * sizeof(hmm_mat4));
+            buf_info.buffer = sg_make_buffer(&inst_desc);
+            buf_info.capacity = new_capacity;
+        }
+
+        const uint32_t data_size = (uint32_t)(instances_for_mesh.size() * sizeof(hmm_mat4));
+        sg_update_buffer(buf_info.buffer, { .ptr = instances_for_mesh.data(), .size = data_size });
+        
+        bind_.vertex_buffers[1] = buf_info.buffer;
+        sg_apply_bindings(&bind_);
+        
+        vs_params_.mvp = view_proj;
+        vs_params_.is_screen_space = 0.0f;
+        sg_apply_uniforms(UB_vs_params, SG_RANGE(vs_params_));
+        
+        if (meta.index_count > 0) {
+            sg_draw(meta.index_offset, meta.index_count, instance_count);
+        }
+    }
+    
+    bind_.vertex_buffers[1] = inst_vbuf_;
+    sg_apply_bindings(&bind_);
 }

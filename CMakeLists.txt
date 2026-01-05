@@ -41,6 +41,11 @@ add_executable(Game WIN32
     src/UI/UIManager.cpp
     src/ThirdParty/HandmadeMathImpl.cpp
     src/ThirdParty/StbImageImpl.cpp
+    src/Editor/EditorUI.cpp
+    src/Editor/WireframeManager.cpp
+    src/Editor/EntityPlacement.cpp
+    src/Editor/TransformGizmo.cpp
+    src/Utilities/RaycastHelper.cpp
 )
 
 target_include_directories(Game PRIVATE

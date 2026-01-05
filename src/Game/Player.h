@@ -52,8 +52,11 @@ private:
     // input state
     bool forward_ = false, back_ = false, left_ = false, right_ = false, sprint_ = false;
     bool up_ = false, down_ = false; // For Edit mode vertical movement
+    bool jump_ = false;  // ADDED: Jump input
     bool inputEnabled_ = true; // Input processing enabled/disabled
+    bool isGrounded_ = false;  // ADDED: Track if player is on ground
 
     float moveSpeed_ = 6.0f;
     float rotationSpeed_ = 5.0f; // How fast the model rotates to match camera
+    float jumpForce_ = 15.0f;  // ADDED: Jump velocity
 };

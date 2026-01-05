@@ -3,13 +3,17 @@
 #include "../../External/HandmadeMath.h"
 #include "../Game/ECS.h"
 
+// Forward declare GameStateManager
+class GameStateManager;
+
 class Camera {
 public:
     Camera();
     ~Camera() = default;
 
     // Update camera rotation based on mouse input
-    void ProcessMouseMovement(float dx, float dy);
+    // NEW: Pass game state to control clamping behavior
+    void ProcessMouseMovement(float dx, float dy, GameStateManager* gameState = nullptr);
     
     // Update camera distance based on scroll input
     void ProcessMouseScroll(float scroll_delta);
@@ -61,7 +65,7 @@ public:
     float lookAtOffset_ = 0.5f;      // Look-at target offset (Y-axis)
     float minPitch_ = -1.5f;         // Minimum pitch angle
     float maxPitch_ = 1.5f;          // Maximum pitch angle
-    bool clampPitch_ = false;        // Enable/disable pitch clamping
+    bool clampPitch_ = true;         // Enable/disable pitch clamping (now only in play mode)
     float freeCameraSpeed_ = 10.0f;  // Free camera movement speed
 
 private:

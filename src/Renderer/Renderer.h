@@ -5,7 +5,6 @@
 #include "../../../External/Sokol/sokol_glue.h"
 #include "../../../External/HandmadeMath.h"
 
-// Include both shader headers directly (they have include guards now)
 #include "Shader3D.h"
 #include "Shader2D.h"
 #include "Shader3DLit.h"
@@ -25,21 +24,28 @@ public:
     // Mesh management
     int AddMesh(const Model3D& mesh);
     void RemoveMesh(int meshId);
+    
+    // ADDED: Mark a mesh as wireframe (uses line rendering)
+    void MarkMeshAsWireframe(int meshId, bool isWireframe = true);
+    
+    // ADDED: Mark a mesh as a gizmo (renders with no depth test)
+    void MarkMeshAsGizmo(int meshId, bool isGizmo = true);
 
     // Instance management
     int AddInstance(int meshId, const hmm_mat4& transform);
     void UpdateInstanceTransform(int instanceId, const hmm_mat4& transform);
     void RemoveInstance(int instanceId);
     
-    // Mark instance as screen-space (for HUD rendering)
     void SetInstanceScreenSpace(int instanceId, bool isScreenSpace);
 
     void OnResize();
 
     // Render API
     void BeginPass();
-    void Render(const hmm_mat4& mvp); // 3D world rendering
-    void RenderScreenSpace(const hmm_mat4& orthoProj); // 2D screen-space rendering
+    void Render(const hmm_mat4& mvp);
+    void RenderScreenSpace(const hmm_mat4& orthoProj);
+    void RenderWireframes(const hmm_mat4& view_proj);  // Wireframes with depth test
+    void RenderGizmos(const hmm_mat4& view_proj);      // ADDED: Gizmos without depth test
     void EndPass();
 
     void SetLights(const std::vector<hmm_vec3>& positions,
@@ -60,6 +66,8 @@ private:
         int index_count;
         sg_image texture;
         bool has_texture;
+        bool is_wireframe;  // Flag to identify wireframe meshes
+        bool is_gizmo;      // ADDED: Flag to identify gizmo meshes
     };
 
     struct InstanceBufferInfo {
@@ -78,12 +86,14 @@ private:
     sg_buffer inst_vbuf_;
     std::unordered_map<int, InstanceBufferInfo> mesh_instance_bufs_;
     
-    // Pipelines for 3D and 2D rendering
-    sg_pipeline pip_3d_;           // 3D pipeline with lighting
-    sg_pipeline pip_3d_no_depth_;  // 3D pipeline without depth (not used currently)
-    sg_pipeline pip_2d_;           // 2D pipeline for textured quads
-    sg_pipeline pip_2d_no_depth_;  // 2D pipeline without depth for screen-space
-    sg_pipeline pip_3d_lit_;      // 3D pipeline with lighting
+    // Pipelines
+    sg_pipeline pip_3d_;
+    sg_pipeline pip_3d_no_depth_;
+    sg_pipeline pip_2d_;
+    sg_pipeline pip_2d_no_depth_;
+    sg_pipeline pip_3d_lit_;
+    sg_pipeline pip_3d_lines_;         // Line rendering with depth test
+    sg_pipeline pip_3d_lines_no_depth_; // ADDED: Line rendering without depth test (for gizmos)
     
     sg_bindings bind_;
     sg_pass_action pass_action_;
@@ -103,11 +113,13 @@ private:
     std::unordered_map<int, MeshMeta> meshes_;
     std::vector<ModelInstance> instances_;
     std::set<int> screenSpaceInstances_;
+    std::set<int> wireframeMeshes_;  // Track which meshes are wireframes
+    std::set<int> gizmoMeshes_;      // ADDED: Track which meshes are gizmos
     int next_mesh_id_;
     int next_instance_id_;
 
     vs_params_t vs_params_;
-    fs_params_t fs_params_;       // Fragment shader lighting params
+    fs_params_t fs_params_;
 
     hmm_vec3 camera_pos_;
 

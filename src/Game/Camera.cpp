@@ -1,4 +1,5 @@
 #include "Camera.h"
+#include "GameState.h"
 #include "../../External/Imgui/imgui.h"
 #include <cmath>
 
@@ -9,12 +10,17 @@ static inline float clampf(float v, float a, float b) {
 Camera::Camera() {
 }
 
-void Camera::ProcessMouseMovement(float dx, float dy) {
-    // FIXED: Use normal direction (removed inversion)
-    yaw_ += dx * sensitivity_;  // Changed back from -= to +=
+void Camera::ProcessMouseMovement(float dx, float dy, GameStateManager* gameState) {
+    yaw_ += dx * sensitivity_;
     pitch_ += -dy * sensitivity_;
     
-    if (clampPitch_) {
+    // Only clamp pitch in PLAYING mode (not in EDIT mode)
+    bool shouldClamp = clampPitch_;
+    if (gameState != nullptr && gameState->IsEdit()) {
+        shouldClamp = false; // Disable clamping in edit mode
+    }
+    
+    if (shouldClamp) {
         pitch_ = clampf(pitch_, minPitch_, maxPitch_);
     }
 }
@@ -29,7 +35,7 @@ void Camera::UpdateFreeCamera(float dt, bool forward, bool back, bool left, bool
     // Calculate movement directions based on camera orientation
     hmm_vec3 forward_dir = HMM_Vec3(-sinf(yaw_) * cosf(pitch_), sinf(pitch_), cosf(yaw_) * cosf(pitch_));
     hmm_vec3 right_dir = HMM_Vec3(cosf(yaw_), 0.0f, sinf(yaw_));
-    hmm_vec3 up_dir = HMM_Vec3(0.0f, 1.0f, 0.0f); // World up vector
+    hmm_vec3 up_dir = HMM_Vec3(0.0f, 1.0f, 0.0f);
     
     hmm_vec3 movement = HMM_Vec3(0.0f, 0.0f, 0.0f);
     
@@ -48,7 +54,6 @@ void Camera::UpdateFreeCamera(float dt, bool forward, bool back, bool left, bool
         ));
     }
     if (left) {
-        // Fixed: Changed from negative to positive to correct left/right inversion
         movement = HMM_AddVec3(movement, HMM_Vec3(
             right_dir.X * speed * dt,
             right_dir.Y * speed * dt,
@@ -56,7 +61,6 @@ void Camera::UpdateFreeCamera(float dt, bool forward, bool back, bool left, bool
         ));
     }
     if (right) {
-        // Fixed: Changed from positive to negative to correct left/right inversion
         movement = HMM_AddVec3(movement, HMM_Vec3(
             -right_dir.X * speed * dt,
             -right_dir.Y * speed * dt,
@@ -64,7 +68,6 @@ void Camera::UpdateFreeCamera(float dt, bool forward, bool back, bool left, bool
         ));
     }
     if (up) {
-        // Move straight up in world space
         movement = HMM_AddVec3(movement, HMM_Vec3(
             up_dir.X * speed * dt,
             up_dir.Y * speed * dt,
@@ -72,7 +75,6 @@ void Camera::UpdateFreeCamera(float dt, bool forward, bool back, bool left, bool
         ));
     }
     if (down) {
-        // Move straight down in world space
         movement = HMM_AddVec3(movement, HMM_Vec3(
             -up_dir.X * speed * dt,
             -up_dir.Y * speed * dt,
@@ -84,8 +86,6 @@ void Camera::UpdateFreeCamera(float dt, bool forward, bool back, bool left, bool
 }
 
 hmm_vec3 Camera::GetPosition(const hmm_vec3& target_position) const {
-    // Position camera BEHIND the target (offset by yaw and pitch)
-    // This creates a third-person camera that orbits around the target
     float offsetX = distance_ * sinf(yaw_) * cosf(pitch_);
     float offsetY = distance_ * sinf(pitch_) + heightOffset_;
     float offsetZ = distance_ * -cosf(yaw_) * cosf(pitch_);
@@ -98,7 +98,6 @@ hmm_vec3 Camera::GetPosition(const hmm_vec3& target_position) const {
 }
 
 hmm_mat4 Camera::GetViewMatrix(const hmm_vec3& target_position) const {
-    // Camera looks at the target with offset
     hmm_vec3 look_target = HMM_Vec3(
         target_position.X,
         target_position.Y + lookAtOffset_,
@@ -110,7 +109,6 @@ hmm_mat4 Camera::GetViewMatrix(const hmm_vec3& target_position) const {
 }
 
 hmm_mat4 Camera::GetFreeCameraViewMatrix() const {
-    // Calculate look-at target based on camera rotation
     hmm_vec3 forward = HMM_Vec3(
         -sinf(yaw_) * cosf(pitch_),
         sinf(pitch_),
@@ -127,12 +125,10 @@ hmm_vec3 Camera::GetForwardDirection() const {
 }
 
 hmm_vec3 Camera::GetRightDirection() const {
-    // FIXED: Negate to match inverted yaw direction
-    return HMM_Vec3(-cosf(yaw_), 0.0f, -sinf(yaw_)); // Added negative signs
+    return HMM_Vec3(-cosf(yaw_), 0.0f, -sinf(yaw_));
 }
 
 hmm_vec3 Camera::GetForward3D() const {
-    // Returns the full 3D forward direction including pitch (for raycasting)
     return HMM_Vec3(
         -sinf(yaw_) * cosf(pitch_),
         sinf(pitch_),
@@ -160,7 +156,7 @@ void Camera::RenderImGuiControls() {
         ImGui::Separator();
         ImGui::Text("Rotation");
         ImGui::Text("Yaw: %.2f  Pitch: %.2f", yaw_, pitch_);
-        ImGui::Checkbox("Clamp Pitch", &clampPitch_);
+        ImGui::Checkbox("Clamp Pitch (Play Mode Only)", &clampPitch_);
         if (clampPitch_) {
             ImGui::SliderFloat("Min Pitch", &minPitch_, -3.14f, 0.0f, "%.2f");
             ImGui::SliderFloat("Max Pitch", &maxPitch_, 0.0f, 3.14f, "%.2f");

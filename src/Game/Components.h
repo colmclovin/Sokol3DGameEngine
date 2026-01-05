@@ -2,82 +2,154 @@
 
 #include "../../External/HandmadeMath.h"
 #include <cstdint>
+#include <vector>
 
 // Forward declare EntityId (defined in ECS.h)
 using EntityId = int;
 
-// Basic transform
+// ============================================================================
+// TRANSFORM COMPONENT
+// ============================================================================
 struct Transform {
     hmm_vec3 position{0.0f, 0.0f, 0.0f};
-    float yaw = 0.0f;   // rotation around Y (in degrees)
-    float pitch = 0.0f; // rotation around X (in degrees)
-    float roll = 0.0f; // rotation around Z (in degrees)
+    hmm_vec3 scale{1.0f, 1.0f, 1.0f};
+    hmm_vec3 originOffset{0.0f, 0.0f, 0.0f};
+    float yaw = 0.0f;
+    float pitch = 0.0f;
+    float roll = 0.0f;
     
-    // Optional: Custom matrix for billboards (bypasses Euler angles)
     bool useCustomMatrix = false;
     hmm_mat4 customMatrix = HMM_Mat4d(1.0f);
     
     hmm_mat4 ModelMatrix() const {
         if (useCustomMatrix) {
-            // Use custom matrix directly (for billboards)
             return customMatrix;
         }
         
-        hmm_mat4 t = HMM_Translate(position);
-        // HMM_Rotate expects angles in DEGREES, not radians!
+        hmm_mat4 originTranslation = HMM_Translate(originOffset);
+        hmm_mat4 s = HMM_Scale(scale);
+        
         hmm_mat4 rx = HMM_Rotate(pitch, HMM_Vec3(1.0f, 0.0f, 0.0f));
         hmm_mat4 ry = HMM_Rotate(yaw, HMM_Vec3(0.0f, 1.0f, 0.0f));
         hmm_mat4 rz = HMM_Rotate(roll, HMM_Vec3(0.0f, 0.0f, 1.0f));
         
-        // Build rotation matrix step by step
-        hmm_mat4 rot = HMM_MultiplyMat4(HMM_MultiplyMat4(rx, ry), rz); // Rx * Ry * Rz
+        hmm_mat4 rot = HMM_MultiplyMat4(HMM_MultiplyMat4(rx, ry), rz);
         
-        // Apply translation last
-        return HMM_MultiplyMat4(t, rot);
+        hmm_mat4 t = HMM_Translate(position);
+        hmm_mat4 temp = HMM_MultiplyMat4(s, originTranslation);
+        temp = HMM_MultiplyMat4(rot, temp);
+        return HMM_MultiplyMat4(t, temp);
+    }
+    
+    hmm_vec3 GetWorldPosition() const {
+        hmm_mat4 rx = HMM_Rotate(pitch, HMM_Vec3(1.0f, 0.0f, 0.0f));
+        hmm_mat4 ry = HMM_Rotate(yaw, HMM_Vec3(0.0f, 1.0f, 0.0f));
+        hmm_mat4 rz = HMM_Rotate(roll, HMM_Vec3(0.0f, 0.0f, 1.0f));
+        hmm_mat4 rot = HMM_MultiplyMat4(HMM_MultiplyMat4(rx, ry), rz);
+        
+        hmm_vec4 offset4 = HMM_Vec4(originOffset.X, originOffset.Y, originOffset.Z, 0.0f);
+        hmm_vec4 rotatedOffset4 = HMM_MultiplyMat4ByVec4(rot, offset4);
+        hmm_vec3 rotatedOffset = HMM_Vec3(rotatedOffset4.X, rotatedOffset4.Y, rotatedOffset4.Z);
+        
+        return HMM_AddVec3(position, rotatedOffset);
     }
 };
 
-// Collider types
+// ============================================================================
+// COLLISION SYSTEM
+// ============================================================================
+
 enum class ColliderType : uint8_t {
     Sphere = 0,
     Box,
-    Capsule
+    Capsule,
+    Mesh,        // Complex geometry (terrain, buildings)
+    Plane        // Infinite plane (simple ground)
 };
 
-// Collision data
+// Triangle for mesh collider
+struct CollisionTriangle {
+    hmm_vec3 v0, v1, v2;  // Vertices in local space
+    hmm_vec3 normal;       // Pre-calculated normal
+};
+
 struct Collider {
     ColliderType type = ColliderType::Sphere;
     
-    // Sphere collider
+    // === Primitive shapes ===
     float radius = 1.0f;
-    
-    // Box collider (AABB in local space)
     hmm_vec3 boxHalfExtents{1.0f, 1.0f, 1.0f};
-    
-    // Capsule collider
     float capsuleHeight = 2.0f;
     float capsuleRadius = 0.5f;
     
-    // Collision flags
-    bool isTrigger = false; // If true, no physics response (just detection)
-    bool isStatic = false;  // If true, object doesn't move from collisions
+    // === Mesh collider ===
+    std::vector<CollisionTriangle> triangles;
+    hmm_vec3 meshBoundsMin{0.0f, 0.0f, 0.0f};
+    hmm_vec3 meshBoundsMax{0.0f, 0.0f, 0.0f};
     
-    // Collision groups (bitfield for filtering)
-    uint32_t collisionMask = 0xFFFFFFFF; // What this collides with
-    uint32_t collisionLayer = 0x00000001; // What layer this is on
+    // === Plane collider ===
+    hmm_vec3 planeNormal{0.0f, 1.0f, 0.0f};
+    float planeDistance = 0.0f;
+    
+    // === Collision properties ===
+    bool isTrigger = false;
+    bool isStatic = false;
+    uint32_t collisionMask = 0xFFFFFFFF;
+    uint32_t collisionLayer = 0x00000001;
+    bool useBroadPhase = true;
 };
 
-// Simple rigidbody (kinematic support)
 struct Rigidbody {
     hmm_vec3 velocity{0.0f, 0.0f, 0.0f};
     float mass = 1.0f;
     bool affectedByGravity = true;
-    bool isKinematic = false; // If true, not affected by forces/collisions
-    float drag = 0.1f; // Air resistance (0 = no drag, 1 = high drag)
-    float bounciness = 0.0f; // Restitution coefficient (0 = no bounce, 1 = perfect bounce)
+    bool isKinematic = false;
+    float drag = 0.1f;
+    float bounciness = 0.0f;
 };
 
-// Very small AI controller state
+// ============================================================================
+// SELECTION SYSTEM
+// ============================================================================
+
+enum class SelectionVolumeType : uint8_t {
+    Sphere = 0,
+    Box,
+    Mesh,
+    Icon
+};
+
+struct Selectable {
+    bool isSelected = false;
+    const char* name = "Entity";
+    
+    // === Selection volume ===
+    SelectionVolumeType volumeType = SelectionVolumeType::Sphere;
+    
+    // Sphere volume
+    float boundingSphereRadius = 1.0f;
+    float boundingRadius = 1.0f;  // KEPT: Backward compatibility alias
+    
+    // Box volume
+    hmm_vec3 boundingBoxMin{-1.0f, -1.0f, -1.0f};
+    hmm_vec3 boundingBoxMax{1.0f, 1.0f, 1.0f};
+    
+    // Mesh volume
+    bool useMeshColliderForPicking = false;
+    
+    // Icon picking
+    hmm_vec2 iconScreenSize{32.0f, 32.0f};
+    
+    // === Editor properties ===
+    bool showWireframe = true;
+    bool canBeSelected = true;
+    int editorLayer = 0;
+};
+
+// ============================================================================
+// AI, ANIMATION, BILLBOARD, SCREEN SPACE
+// ============================================================================
+
 enum class AIState : uint8_t {
     Idle = 0,
     Wander,
@@ -87,36 +159,36 @@ enum class AIState : uint8_t {
 struct AIController {
     AIState state = AIState::Idle;
     float stateTimer = 0.0f;
-    // wander target or other per-AI data
-    hmm_vec3 wanderTarget{0.0f,0.0f,0.0f};
+    hmm_vec3 wanderTarget{0.0f, 0.0f, 0.0f};
 };
 
-// Animation stub (time and current clip id)
 struct Animator {
     int currentClip = -1;
     float time = 0.0f;
 };
 
-// Billboard component - makes entity always face the camera
 struct Billboard {
-    EntityId followTarget = -1; // Entity to follow (e.g., player)
-    hmm_vec3 offset{0.0f, 0.0f, 0.0f}; // Offset from target position
-    bool lockY = true; // Only rotate around Y axis (cylindrical billboard)
+    EntityId followTarget = -1;
+    hmm_vec3 offset{0.0f, 0.0f, 0.0f};
+    bool lockY = true;
 };
 
-// Screen-space component for HUD elements
-// Position is in normalized screen coordinates: (0,0) = top-left, (1,1) = bottom-right
 struct ScreenSpace {
-    hmm_vec2 screenPosition{0.0f, 0.0f}; // Position in screen space (0-1 range)
-    hmm_vec2 size{0.1f, 0.1f}; // Size in screen space (0-1 range)
-    float depth = 0.0f; // Depth for layering (0 = front, 1 = back)
+    hmm_vec2 screenPosition{0.0f, 0.0f};
+    hmm_vec2 size{0.1f, 0.1f};
+    float depth = 0.0f;
 };
 
-// NOTE: Light struct is defined in include/Model.h - use that instead of redefining here
+// ============================================================================
+// GHOST PREVIEW
+// ============================================================================
 
-// Selectable component - marks entity as selectable in edit mode
-struct Selectable {
-    bool isSelected = false;
-    float boundingRadius = 1.0f; // Radius for picking sphere
-    const char* name = "Entity"; // Display name in inspector
+struct GhostPreview {
+    bool isGhost = true;
+    float opacity = 0.5f;
+    bool snapToSurface = true;
+    bool snapToGrid = false;
+    float gridSize = 1.0f;
+    bool alignToSurfaceNormal = false;
+    hmm_vec3 surfaceNormal{0.0f, 1.0f, 0.0f};
 };
